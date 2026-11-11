@@ -1,0 +1,1371 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<script>try{var t=localStorage.getItem('fc_theme');if(t!=='dark'&&t!=='light')t=matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light';document.documentElement.dataset.theme=t}catch(e){}</script>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="../assets/icons/pos-32.png" type="image/png">
+<link rel="apple-touch-icon" href="../assets/icons/pos-apple.png">
+<meta name="theme-color" content="#0f766e">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Flex-C Pos">
+<title>Flex-C POS</title>
+<style>
+:root{--bg:#f1f5f9;--card:#fff;--ink:#0f172a;--mute:#64748b;--line:#e2e8f0;--brand:#0f766e;--brand2:#0d5f59;--bad:#b91c1c;--warn:#b45309;--ok:#15803d}
+*{box-sizing:border-box}
+body{margin:0;font:15px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--ink)}
+.hidden{display:none!important}
+button{font:inherit;cursor:pointer;border:0;border-radius:8px;padding:10px 14px;background:var(--brand);color:#fff;font-weight:600}
+button:hover{background:var(--brand2)}
+button.sec{background:#e2e8f0;color:var(--ink)}button.sec:hover{background:#cbd5e1}
+button.bad{background:var(--bad)}
+button:disabled{opacity:.5;cursor:not-allowed}
+input,select{font:inherit;padding:9px 10px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--ink);width:100%}
+label{display:block;font-size:13px;color:var(--mute);margin:10px 0 4px}
+.overlay{position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center;padding:16px;z-index:50}
+.box{background:var(--card);border-radius:14px;padding:24px;width:100%;max-width:380px;box-shadow:0 8px 30px #0002}
+.box h1{margin:0 0 2px;font-size:22px}.box .by{color:var(--mute);font-size:13px;margin-bottom:12px}
+.err{color:var(--bad);font-size:13px;margin-top:8px;min-height:18px}
+.okmsg{color:var(--ok);font-size:13px;margin-top:8px;min-height:18px}
+header{display:flex;gap:10px;align-items:center;padding:8px 14px;background:var(--brand);color:#fff;flex-wrap:wrap}
+header b{font-size:16px}header .sp{flex:1}
+header button{padding:6px 10px;background:#ffffff26}
+#where{font-size:13px;opacity:.9}
+#badge{font-size:12px;padding:4px 10px;border-radius:99px;background:#ffffff26;white-space:nowrap}
+#badge.off{background:var(--warn)}#badge.err{background:var(--bad)}
+main{display:grid;grid-template-columns:1fr 460px;gap:12px;padding:12px;height:calc(100vh - 52px)}
+section{background:var(--card);border-radius:12px;padding:12px;display:flex;flex-direction:column;min-height:0}
+#results{overflow:auto;margin-top:10px;display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;align-content:start}
+.tile{border:1px solid var(--line);border-radius:10px;padding:10px;background:#fff;color:var(--ink);text-align:left;font-weight:500}
+.tile:hover{background:#f0fdfa;border-color:var(--brand)}
+.tile.low{border-color:#fcd34d;background:#fffbeb}
+.tile .n{font-size:14px;display:block;min-height:36px}.tile .p{font-weight:700;color:var(--brand)}.tile .s{font-size:12px;color:var(--mute)}
+.tile .s.low{color:var(--warn);font-weight:700}
+#cart{flex:1;overflow:auto;margin:8px 0}
+table{width:100%;border-collapse:collapse}
+td,th{padding:6px 4px;border-bottom:1px solid var(--line);text-align:left;font-size:14px;vertical-align:middle}
+th{font-size:12px;color:var(--mute);font-weight:600}
+td.r,th.r{text-align:right}
+.q{width:54px;padding:5px;text-align:center}.qc{white-space:nowrap}button.qs{padding:4px 9px;font-size:16px;line-height:1;border-radius:6px}#camDlg video{display:block}.d{width:58px;padding:5px;text-align:right}
+.x{background:none;color:var(--bad);padding:2px 8px;font-size:18px}.x:hover{background:#fee2e2}
+.tot{border-top:2px solid var(--ink);padding-top:8px}
+.tot div{display:flex;justify-content:space-between;margin:2px 0}.tot .g{font-size:26px;font-weight:800}
+.row{display:flex;gap:8px;align-items:center}
+.pill{padding:3px 9px;border-radius:99px;font-size:12px;font-weight:600}
+.pill.pending{background:#fef3c7;color:var(--warn)}.pill.synced{background:#dcfce7;color:var(--ok)}.pill.error{background:#fee2e2;color:var(--bad)}
+dialog{border:0;border-radius:14px;padding:20px;width:min(96vw,480px);box-shadow:0 12px 40px #0004}
+dialog::backdrop{background:#0006}
+.chg{font-size:22px;font-weight:800;color:var(--ok)}
+#receipt,#a4{display:none}
+.pw{text-align:center;color:var(--mute);font-size:12px;padding:8px 0 0}.pw a{color:var(--brand);text-decoration:none;font-weight:600}
+#holds{display:flex;flex-direction:column;gap:6px;margin:4px 0 8px;max-height:180px;overflow:auto}
+.hold{display:flex;gap:8px;align-items:center;border-radius:9px;padding:7px 9px;font-size:13px;border:1px solid #fcd34d;background:#fef3c7;color:#78350f}
+.hold.bad{border-color:#fca5a5;background:#fee2e2;color:#7f1d1d}
+.hold .t{font-weight:700}.hold .m{flex:1;min-width:0}
+.hold .m small{display:block;opacity:.8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hold button{padding:4px 9px;font-size:12px;background:#ffffffb0;color:inherit}
+.hold button.del{background:#ffffff70}
+.authbox{background:#fffbeb;border:1px solid #fcd34d;border-radius:10px;padding:10px;margin-top:10px}
+.authbox h4{margin:0 0 4px;font-size:14px;color:#92400e}
+.hint{font-size:12px;color:var(--mute);margin-top:6px}
+.kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:10px 0}
+.kpis div{background:#f8fafc;border:1px solid var(--line);border-radius:9px;padding:8px}
+.kpis span{display:block;font-size:11px;color:var(--mute);text-transform:uppercase;letter-spacing:.03em}
+.kpis b{font-size:16px}
+.split2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.calc{display:flex;justify-content:space-between;gap:10px;background:#f8fafc;border-radius:9px;padding:9px;margin-top:10px;font-size:14px}
+.calc b.pos{color:var(--ok)}.calc b.neg{color:var(--bad)}
+.daybtns{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px}
+@media (max-width:980px){main{grid-template-columns:1fr;height:auto}#results{max-height:34vh}}
+main>section{min-width:0}
+@media (max-width:720px){section.items .row{flex-wrap:wrap}#scan{flex:1 1 100%}main{padding:8px;gap:8px}.tot .g{font-size:26px}}
+@media print{
+  body:not(.a4print)>*:not(#receipt){display:none!important}
+  body.a4print>*:not(#a4){display:none!important}
+  #receipt{display:none}
+  body:not(.a4print) #receipt{display:block!important;width:72mm;margin:0 auto;padding:3mm;font:12px/1.35 monospace;color:#000;background:#fff}
+  #receipt h2{font-size:15px;margin:0;text-align:center}
+  #receipt .c{text-align:center}#receipt hr{border:0;border-top:1px dashed #000;margin:5px 0}
+  #receipt table td,#receipt table th{border:0;padding:1px 0;font-size:12px}
+  #receipt .t{display:flex;justify-content:space-between}
+  #a4{display:none}
+  body.a4print #a4{display:block!important;width:190mm;margin:0 auto;padding:0;font:12px/1.45 Arial,Helvetica,sans-serif;color:#000;background:#fff}
+  #a4 .head{display:flex;justify-content:space-between;gap:20px;border-bottom:2px solid #000;padding-bottom:10px}
+  #a4 h1{font-size:22px;margin:0 0 2px}#a4 h2{font-size:16px;margin:0 0 4px}
+  #a4 .muted{color:#444}#a4 .right{text-align:right}
+  #a4 table{width:100%;border-collapse:collapse;margin-top:12px}
+  #a4 th,#a4 td{border-bottom:1px solid #999;padding:5px 4px;font-size:12px}
+  #a4 th{background:#f2f2f2;text-align:left}#a4 td.r,#a4 th.r{text-align:right}
+  #a4 .totals{width:65mm;margin-left:auto;margin-top:10px}
+  #a4 .totals div{display:flex;justify-content:space-between;padding:2px 0}
+  #a4 .totals .big{border-top:2px solid #000;font-weight:800;font-size:14px;margin-top:4px;padding-top:4px}
+  #a4 .foot{margin-top:18px;border-top:1px solid #999;padding-top:8px;font-size:11px;color:#333}
+  #a4 img{max-height:60px;max-width:150px}
+}
+
+/* ---- 1.3 look ---- */
+:root{--bg:#eef2f6;--brand:#0f766e;--brand2:#0d5f59;--accent:#14b8a6;--shadow:0 1px 2px #0f172a10,0 6px 20px #0f172a0d}
+body{background:radial-gradient(1200px 500px at 10% -10%,#dbeeff 0,transparent 60%),var(--bg)}
+button{border-radius:10px;transition:background .15s,transform .05s,box-shadow .15s}
+button:active{transform:translateY(1px)}
+button.sec{background:#e6ecf2}
+svg.ic{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex:none}
+button[data-ic],a[data-ic]{display:inline-flex;align-items:center;justify-content:center;gap:7px}
+header{background:linear-gradient(135deg,#134e4a,#0f766e);box-shadow:0 2px 12px #0f172a30;padding:9px 16px}
+header button{background:#ffffff24;display:inline-flex;align-items:center;gap:6px;padding:7px 11px}
+header button:hover{background:#ffffff38}
+.brandmark{width:30px;height:30px;border-radius:9px;background:#fff;color:var(--brand);display:grid;place-items:center;font-weight:900;font-size:17px}
+section{border-radius:16px;box-shadow:var(--shadow);padding:14px}
+input,select{border-radius:10px;border-color:#d5dde6}
+input:focus,select:focus{outline:2px solid #14b8a64d;border-color:var(--accent)}
+.tile{border-radius:13px;box-shadow:0 1px 2px #0f172a0a;transition:transform .08s,box-shadow .15s,border-color .15s}
+.tile:hover{transform:translateY(-1px);box-shadow:0 6px 16px #0f766e22}
+.tile .p,.tile .s{display:block}.tile .p{font-size:16px}.tile .vi{font-size:10px;color:var(--mute);font-weight:500;margin-left:3px}
+.tot{border-top:0;background:#f6f9fb;border-radius:12px;padding:10px 12px}
+.tot div{font-size:14px;color:#334155}.tot .g{font-size:30px;color:var(--ink);letter-spacing:-.02em}
+.tot .grand{align-items:baseline;border-top:1px dashed #cbd5e1;margin-top:6px;padding-top:6px;color:var(--ink);font-weight:700}
+#btnPay{background:linear-gradient(135deg,#0f766e,#0f766e);border-radius:12px;box-shadow:0 6px 16px #0f766e40;width:100%}
+dialog{border-radius:18px;box-shadow:0 20px 60px #0f172a50}
+.vatbox{background:#f6f9fb;border-radius:10px;padding:8px 10px;margin:8px 0;font-size:13px}
+.vatbox div{display:flex;justify-content:space-between;color:#475569;margin:1px 0}.vatbox b{color:var(--ink)}
+.cons{display:flex;gap:8px;align-items:center;font-size:13px;color:var(--ink);margin:8px 0 0}.cons input{width:auto}
+.actgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}
+.actgrid button{padding:12px 8px;font-size:14px}
+.btnwa{background:#16a34a}.btnwa:hover{background:#15803d}
+.doneok{width:54px;height:54px;border-radius:50%;background:#dcfce7;color:var(--ok);display:grid;place-items:center;margin:0 auto 6px}
+.doneok svg{width:30px;height:30px;stroke-width:3}
+.donemeta{text-align:center;color:var(--mute);font-size:13px}
+.donechg{text-align:center;font-size:30px;font-weight:800;color:var(--ok);margin:4px 0}
+.ibtn{padding:7px 9px!important;border-radius:9px}
+.rowact{display:flex;gap:5px;justify-content:flex-end}
+#receipt svg{display:block;width:32mm;height:32mm;margin:4px auto 0}
+#a4 .qrbox{float:right;text-align:center;font-size:10px;margin-top:8px}#a4 .qrbox svg{width:26mm;height:26mm;display:block}
+#wm{position:absolute;left:0;right:0;bottom:0;top:62px;background-position:center;background-repeat:no-repeat;background-size:min(62%,420px);pointer-events:none;border-radius:0 0 16px 16px}
+section.items{position:relative}
+.seg{display:flex;gap:6px;margin:10px 0 4px}.seg button{flex:1;background:#e6ecf2;color:var(--ink);padding:11px 6px}.seg button.on{background:var(--brand);color:#fff;box-shadow:0 4px 12px #0f766e40}#results{position:relative;z-index:1}
+@media print{#receipt .thx{font-weight:700;text-align:center;margin:4px 0}}
+</style>
+<style id="pageRule">@page{size:80mm auto;margin:0}</style>
+<style id="dark">
+@media screen{
+html[data-theme=dark]{color-scheme:dark;--bg:#0b1220;--card:#162032;--ink:#e5e7eb;--mute:#94a3b8;--line:#2a3a52;--soft:#2b3a52;--soft0:#101a2b;--ok:#4ade80;--bad:#f87171;--warn:#fbbf24}
+html[data-theme=dark] .tile .p,html[data-theme=dark] .card a:not(.btn),html[data-theme=dark] .pw a,html[data-theme=dark] .box a{color:var(--accent,#5eead4)}
+html[data-theme=dark] dialog{background:var(--card);color:var(--ink)}
+html[data-theme=dark] dialog::backdrop{background:#000a}
+html[data-theme=dark] input::placeholder{color:#64748b}
+html[data-theme=dark] .kpi,html[data-theme=dark] .shopcard{box-shadow:0 1px 2px #0006}
+html[data-theme=dark] .hint,html[data-theme=dark] .muted{color:var(--mute)}
+html[data-theme=dark] button.sec{background:var(--soft)}
+html[data-theme=dark] button.sec:hover{background:var(--soft)}
+html[data-theme=dark] input,html[data-theme=dark] select{background:var(--card)}
+html[data-theme=dark] .tile{background:var(--card)}
+html[data-theme=dark] .tile:hover{background:#0f2f2c}
+html[data-theme=dark] .tile.low{border-color:var(--line);background:#3b2a0a}
+html[data-theme=dark] .x:hover{background:#3f1414}
+html[data-theme=dark] .pill.pending{background:#3b2a0a}
+html[data-theme=dark] .pill.synced{background:#0f2f1c}
+html[data-theme=dark] .pill.error{background:#3f1414}
+html[data-theme=dark] .hold{border-color:var(--line);background:#3b2a0a;color:var(--ink)}
+html[data-theme=dark] .hold.bad{background:#3f1414;color:var(--ink)}
+html[data-theme=dark] .authbox{background:#3b2a0a;border-color:var(--line)}
+html[data-theme=dark] .authbox h4{color:var(--ink)}
+html[data-theme=dark] .kpis div{background:var(--soft0)}
+html[data-theme=dark] .calc{background:var(--soft0)}
+html[data-theme=dark] button.sec{background:var(--soft)}
+html[data-theme=dark] .brandmark{background:var(--card)}
+html[data-theme=dark] input,html[data-theme=dark] select{border-color:var(--line)}
+html[data-theme=dark] .tot{background:var(--soft0)}
+html[data-theme=dark] .tot div{color:var(--ink)}
+html[data-theme=dark] .tot .grand{border-top-color:var(--line)}
+html[data-theme=dark] .vatbox{background:var(--soft0)}
+html[data-theme=dark] .vatbox div{color:var(--ink)}
+html[data-theme=dark] .doneok{background:#0f2f1c}
+html[data-theme=dark] .seg button{background:var(--soft)}
+}
+</style>
+</head>
+<body>
+
+<div id="login" class="overlay hidden">
+  <form class="box" id="loginForm" autocomplete="on">
+    <h1>Flex-C POS</h1><div class="by">Sign in to start selling</div>
+    <div id="step1">
+      <label for="em">Username or email</label><input id="em" type="text" autocomplete="username" required>
+      <label for="pw">Password</label><input id="pw" type="password" autocomplete="current-password" required>
+      <div style="text-align:center;margin-top:6px"><a href="#" id="forgotLink" style="font-size:13px">Forgot password?</a></div>
+    </div>
+    <div id="step2" class="hidden">
+      <label for="regsel">Register</label><select id="regsel"></select>
+    </div>
+    <div class="err" id="loginErr"></div>
+    <button id="loginBtn" style="width:100%;margin-top:6px">Sign in</button>
+    <p style="font-size:12px;color:var(--mute);margin:12px 0 0">Needs internet once to sign in and download items. After that the register works offline.</p>
+    <div class="pw">Powered by <a href="https://adnys.com" target="_blank" rel="noopener">Adnys</a></div>
+  </form>
+</div>
+
+<div id="app" class="hidden">
+  <header>
+    <span class="brandmark">F</span><b>Flex-C POS</b><span id="where"></span><span class="sp"></span>
+    <span id="badge">...</span>
+    <button id="btnRefresh" data-ic="refresh" title="Download latest items and prices">Refresh</button>
+    <button id="btnDay" data-ic="cash" title="Daily sales and cash-up">Cash-up</button>
+    <button id="btnSales" data-ic="list">Sales</button>
+    <button id="btnOut" data-ic="out">Sign out</button>
+  </header>
+  <main>
+    <section class="items">
+      <div id="wm"></div>
+      <div class="row" style="position:relative;z-index:1">
+        <input id="scan" placeholder="Scan or type name / SKU (3*code = qty)" autocomplete="off" autofocus>
+        <button id="btnCam" class="sec" data-ic="camera" style="white-space:nowrap" title="Scan a barcode with the camera">Scan</button>
+        <button id="btnMode" class="sec" style="white-space:nowrap">Sale mode</button>
+        <button id="btnLow" class="sec" style="white-space:nowrap" title="Show only low-stock items">Low stock</button>
+        <button id="btnStockIn" class="sec" style="white-space:nowrap" title="Add received stock to this shop">+ Add stock</button>
+      </div>
+      <div id="results"></div>
+    </section>
+    <section>
+      <div class="row"><b style="flex:1">Cart</b><button class="sec" id="btnHold" data-ic="pause">Hold bill</button><button class="sec" id="btnClear">Clear</button></div>
+      <div id="cart"></div>
+      <div id="holds"></div>
+      <div class="tot">
+        <div><span>Sale amount (excl. VAT)</span><span id="tNet">0.00</span></div>
+        <div><span id="vatLbl">VAT 5%</span><span id="tVat">0.00</span></div>
+        <div class="grand"><span>Total incl. VAT (<span id="curLbl">AED</span>)</span><span class="g" id="tTotal">0.00</span></div>
+      </div>
+      <button id="btnPay" style="margin-top:10px;padding:14px;font-size:17px" disabled>Pay</button>
+      <div class="pw">Powered by <a href="https://adnys.com" target="_blank" rel="noopener">Adnys</a></div>
+    </section>
+  </main>
+</div>
+
+<dialog id="payDlg">
+  <h3 style="margin:0 0 4px" id="payTitle">Payment</h3>
+  <div style="font-size:30px;font-weight:800" id="payDue"></div>
+  <div class="vatbox" id="payVat"></div>
+  <div id="payIn">
+    <div class="seg" id="payMode"><button type="button" data-m="cash" class="on">Cash</button><button type="button" data-m="card">Card</button><button type="button" data-m="split">Cash + Card</button></div>
+    <div id="payCashWrap"><label for="payCash" id="payCashLbl">Cash received</label><input id="payCash" type="number" step="0.01" inputmode="decimal" placeholder="Leave empty for exact cash"></div>
+    <div id="payCardWrap"><label for="payCard" id="payCardLbl">Card amount (fills automatically)</label><input id="payCard" type="number" step="0.01" inputmode="decimal" value="0"></div>
+    <div id="payChgRow" style="margin-top:10px">Change: <span class="chg" id="payChg">0.00</span></div>
+  </div>
+  <div id="refundIn" class="hidden">
+    <label for="refMethod">Refund by</label><select id="refMethod"><option value="cash">Cash</option><option value="card">Card</option><option value="bank">Bank</option></select>
+  </div>
+  <div id="authBox" class="authbox hidden">
+    <h4>Return approval needed</h4>
+    <div class="hint" style="margin:0 0 6px">A manager, accountant or owner must approve. Every return is recorded.</div>
+    <label for="authUser">Authorised username or email</label><input id="authUser" autocomplete="off">
+    <label for="authPass">Authorised password</label><input id="authPass" type="password" autocomplete="off">
+    <label style="margin-top:8px"><input type="checkbox" id="authRemember" checked style="width:auto"> Remember on this device for offline returns</label>
+    <div class="hint" id="authHint"></div>
+  </div>
+  <label for="custPhone">Customer mobile / WhatsApp (optional, for the bill and offers)</label><input id="custPhone" type="tel" inputmode="tel" maxlength="20" placeholder="05x xxx xxxx">
+  <label class="cons"><input type="checkbox" id="custOffers"> Customer agrees to receive offers on WhatsApp</label>
+  <label for="custName">Customer name (optional)</label><input id="custName" maxlength="120">
+  <label for="custTrn">Customer TRN (optional, for B2B invoices)</label><input id="custTrn" maxlength="20">
+  <div class="err" id="payErr"></div>
+  <div class="row" style="margin-top:12px"><button class="sec" id="payCancel" type="button">Cancel</button><button id="payOk" style="flex:1" type="button">Complete sale</button></div>
+</dialog>
+
+<dialog id="camDlg">
+  <h3 style="margin:0 0 8px">Scan with camera</h3>
+  <video id="camVid" playsinline muted style="width:100%;border-radius:10px;background:#000;max-height:50vh"></video>
+  <div id="camMsg" style="margin:8px 0;font-size:14px;color:var(--mute);min-height:20px">Point the camera at a barcode.</div>
+  <button class="sec" id="camDone" type="button" style="width:100%">Done</button>
+</dialog>
+<dialog id="stockDlg">
+  <h3 style="margin:0 0 6px">Add stock to this shop</h3>
+  <div style="font-size:13px;color:var(--mute)">For products already registered. Stock updates straight away.</div>
+  <label for="skItem">Product (scan or type name / SKU)</label>
+  <div style="display:flex;gap:6px"><input id="skItem" list="skList" autocomplete="off" style="flex:1"><button type="button" id="skCam" class="sec" data-ic="camera">Scan</button></div><datalist id="skList"></datalist>
+  <div class="vatbox" id="skInfo" style="display:none"></div>
+  <label for="skQty">Quantity received</label><input id="skQty" type="number" min="1" step="1" inputmode="numeric">
+  <label for="skNote">Note (supplier, bill no. - optional)</label><input id="skNote" maxlength="150">
+  <div id="skAuth" style="display:none"><label for="skUser">Manager / accountant / owner username</label><input id="skUser" autocomplete="off"><label for="skPass">Password</label><input id="skPass" type="password" autocomplete="off"></div>
+  <div class="err" id="skErr"></div>
+  <div style="display:flex;gap:8px;margin-top:10px"><button class="sec" id="skCancel" type="button" style="flex:1">Cancel</button><button id="skOk" type="button" style="flex:2">Add stock</button></div>
+</dialog>
+
+<dialog id="doneDlg">
+  <div class="doneok" id="doneIcon"></div>
+  <h3 style="margin:0;text-align:center" id="doneTitle">Sale complete</h3>
+  <div class="donemeta" id="doneMeta"></div>
+  <div class="donechg" id="doneChg"></div>
+  <label for="doneWa">Customer mobile / WhatsApp</label><input id="doneWa" type="tel" inputmode="tel" maxlength="20" placeholder="05x xxx xxxx">
+  <div class="actgrid">
+    <button class="btnwa" id="doneWaBtn" data-ic="whatsapp" type="button">WhatsApp bill</button>
+    <button class="sec" id="doneShare" data-ic="share" type="button">Share</button>
+    <button class="sec" id="donePrint" data-ic="print" type="button">Print receipt</button>
+    <button class="sec" id="doneA4" data-ic="pdf" type="button">A4 invoice</button>
+  </div>
+  <label class="cons"><input type="checkbox" id="autoPrint"> Print receipt automatically after each sale</label>
+  <button id="doneNew" style="width:100%;margin-top:12px;padding:13px" type="button">New sale</button>
+</dialog>
+
+<dialog id="holdDlg">
+  <h3 style="margin:0 0 4px">Hold this bill</h3>
+  <div class="hint">The bill stays on this device and can be opened or cancelled from the pending list.</div>
+  <label for="holdNote">Customer / note (optional)</label><input id="holdNote" maxlength="120">
+  <div class="row" style="margin-top:12px"><button class="sec" id="holdCancel" type="button">Cancel</button><button id="holdSave" style="flex:1" type="button">Hold bill</button></div>
+</dialog>
+
+<dialog id="dayDlg">
+  <div class="row"><h3 style="margin:0;flex:1">Daily cash-up</h3><button class="sec" id="dayClose">Close</button></div>
+  <div id="dayBody" style="max-height:58vh;overflow:auto;margin-top:8px"></div>
+  <div id="dayMsg" class="okmsg"></div>
+  <div class="daybtns">
+    <button class="sec" id="dcCsv" data-ic="download" type="button">Excel / CSV</button>
+    <button class="sec" id="dcPdf" data-ic="pdf" type="button">PDF</button>
+    <button class="sec" id="dcShare" data-ic="share" type="button">Share</button>
+    <button class="btnwa" id="dcWa" data-ic="whatsapp" type="button">WhatsApp</button>
+    <button class="sec" id="dcMail" data-ic="mail" type="button">Email</button>
+    <button id="dcSave" type="button" style="flex:1">Save closing</button>
+  </div>
+</dialog>
+
+<dialog id="salesDlg">
+  <div class="row"><h3 style="margin:0;flex:1">Recent sales</h3><button class="sec" id="salesClose">Close</button></div>
+  <div id="salesList" style="max-height:60vh;overflow:auto;margin-top:8px"></div>
+</dialog>
+
+<div id="receipt"></div>
+<div id="a4"></div>
+
+<script src="../assets/icons.js?v=b59449fc8d"></script>
+<script src="../assets/qr.js?v=d3461c1385"></script>
+<script>
+'use strict';
+const APP_VERSION = '1.9.4';   // keep equal to assets/app.js
+const API = '../api/index.php';
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const r2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
+const f2 = (n) => r2(+n || 0).toFixed(2);
+
+function uuid() {
+  if (crypto.randomUUID) return crypto.randomUUID();
+  const b = crypto.getRandomValues(new Uint8Array(16));
+  b[6] = (b[6] & 15) | 64; b[8] = (b[8] & 63) | 128;
+  const h = [...b].map((x) => x.toString(16).padStart(2, '0')).join('');
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+}
+// "YYYY-MM-DD HH:MM:SS" in Dubai time, whatever timezone the device is set to.
+const nowDubai = () => new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Dubai' });
+const todayDubai = () => nowDubai().slice(0, 10);
+
+/* ---------- local database (IndexedDB) ---------- */
+let _db;
+function idb() {
+  return _db || (_db = new Promise((res, rej) => {
+    const q = indexedDB.open('felxc_pos', 2);
+    q.onupgradeneeded = () => {
+      const d = q.result;
+      if (!d.objectStoreNames.contains('meta')) d.createObjectStore('meta', { keyPath: 'k' });
+      if (!d.objectStoreNames.contains('items')) d.createObjectStore('items', { keyPath: 'id' });
+      if (!d.objectStoreNames.contains('sales')) d.createObjectStore('sales', { keyPath: 'uuid' }).createIndex('status', 'status');
+      // Held bills live only on this device: they are never sent to the server until paid.
+      if (!d.objectStoreNames.contains('holds')) d.createObjectStore('holds', { keyPath: 'id' });
+    };
+    q.onsuccess = () => res(q.result);
+    q.onerror = () => rej(q.error);
+  }));
+}
+const rq = (r) => new Promise((res, rej) => { r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+async function mget(k) { const d = await idb(); const r = await rq(d.transaction('meta').objectStore('meta').get(k)); return r ? r.v : undefined; }
+async function mset(k, v) {
+  const d = await idb();
+  return new Promise((res, rej) => { const t = d.transaction('meta', 'readwrite'); t.objectStore('meta').put({ k, v }); t.oncomplete = res; t.onerror = () => rej(t.error); });
+}
+async function allOf(store) { const d = await idb(); return rq(d.transaction(store).objectStore(store).getAll()); }
+async function putSale(s) {
+  const d = await idb();
+  return new Promise((res, rej) => { const t = d.transaction('sales', 'readwrite'); t.objectStore('sales').put(s); t.oncomplete = res; t.onerror = () => rej(t.error); });
+}
+async function setItems(list) {
+  const d = await idb();
+  return new Promise((res, rej) => {
+    const t = d.transaction('items', 'readwrite'); const s = t.objectStore('items');
+    s.clear(); list.forEach((i) => s.put(i));
+    t.oncomplete = res; t.onerror = () => rej(t.error);
+  });
+}
+// Take the next invoice number and store the sale in ONE transaction, so a crash can't reuse a number.
+async function saveSale(build) {
+  const d = await idb();
+  return new Promise((res, rej) => {
+    const t = d.transaction(['meta', 'sales'], 'readwrite');
+    const m = t.objectStore('meta'), s = t.objectStore('sales');
+    const g = m.get('seq'); let sale;
+    g.onsuccess = () => {
+      const seq = ((g.result && g.result.v) || 0) + 1;
+      sale = build(seq); m.put({ k: 'seq', v: seq }); s.put(sale);
+    };
+    t.oncomplete = () => res(sale);
+    t.onerror = t.onabort = () => rej(t.error);
+  });
+}
+async function purgeOldSynced() {
+  const cutoff = Date.now() - 7 * 864e5;
+  for (const s of await allOf('sales')) {
+    if (s.status === 'synced' && s.saved_at < cutoff) {
+      const d = await idb(); await new Promise((r) => { const t = d.transaction('sales', 'readwrite'); t.objectStore('sales').delete(s.uuid); t.oncomplete = r; });
+    }
+  }
+}
+
+/* ---------- held bills (local) ---------- */
+async function holdAll() { return allOf('holds'); }
+async function holdPut(h) {
+  const d = await idb();
+  return new Promise((res, rej) => { const t = d.transaction('holds', 'readwrite'); t.objectStore('holds').put(h); t.oncomplete = res; t.onerror = () => rej(t.error); });
+}
+async function holdDel(id) {
+  const d = await idb();
+  return new Promise((res, rej) => { const t = d.transaction('holds', 'readwrite'); t.objectStore('holds').delete(id); t.oncomplete = res; t.onerror = () => rej(t.error); });
+}
+async function saveHold(note) {
+  if (!cart.length) return null;
+  const t = cartTotals();
+  const h = { id: uuid(), created_at: Date.now(), note: note || null, return_mode: returnMode, lines: cart.map((l) => ({ ...l })), total: t.total, count: cart.length };
+  await holdPut(h);
+  return h;
+}
+const holdAge = (ms) => ms < 60000 ? 'just now' : ms < 3600000 ? Math.round(ms / 60000) + ' min' : Math.round(ms / 3600000) + ' h';
+async function renderHolds() {
+  const hs = (await holdAll()).sort((a, b) => a.created_at - b.created_at);
+  const cur = CUR();
+  $('#holds').innerHTML = hs.map((h) => {
+    const age = Date.now() - h.created_at;
+    const bad = age >= 30 * 60000;   // yellow under 30 minutes, red after that
+    return `<div class="hold ${bad ? 'bad' : ''}">
+      <div class="m"><span class="t">${esc(h.note || 'Held bill')} · ${cur} ${f2(h.total)}</span><small>${holdAge(age)} ago · ${h.count} line${h.count === 1 ? '' : 's'}${h.return_mode ? ' · RETURN' : ''}</small></div>
+      <button data-resume="${esc(h.id)}">Open</button><button class="del" data-cancel="${esc(h.id)}">Cancel</button></div>`;
+  }).join('');
+}
+$('#holds').addEventListener('click', async (e) => {
+  const r = e.target.closest('[data-resume]'), c = e.target.closest('[data-cancel]');
+  if (r) await resumeHold(r.dataset.resume);
+  if (c) { if (confirm('Cancel this held bill? Its lines will be lost.')) { await holdDel(c.dataset.cancel); renderHolds(); } }
+});
+
+/* ---------- API ---------- */
+let cfg = null;      // { token, user, regId, settings }
+let ctx = null;      // { company, shop, register, settings }
+async function api(route, body, params) {
+  const u = new URL(API, location.href);
+  u.searchParams.set('r', route);
+  Object.entries(params || {}).forEach(([k, v]) => u.searchParams.set(k, v));
+  const res = await fetch(u, {
+    method: body ? 'POST' : 'GET',
+    headers: { 'Content-Type': 'application/json', 'X-Auth-Token': (cfg && cfg.token) || '' },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  let j = {}; try { j = await res.json(); } catch (e) { /* non-JSON error page */ }
+  if (res.status === 401 && route !== 'login') { const e = new Error('session_expired'); e.code = 401; throw e; }
+  if (!res.ok) throw new Error(j.error || 'http_' + res.status);
+  return j;
+}
+
+/* ---------- state ---------- */
+let ITEMS = [], BYCODE = new Map(), cart = [], returnMode = false, lowOnly = false, syncing = false, sessionExpired = false;
+const CUR = () => (ctx && ctx.settings && ctx.settings.currency) || (cfg && cfg.settings && cfg.settings.currency) || 'AED';
+
+function indexItems() {
+  BYCODE = new Map();
+  for (const i of ITEMS) {
+    BYCODE.set(String(i.sku).toLowerCase(), i);
+    (i.barcodes || []).forEach((b) => {
+      BYCODE.set(String(b).toLowerCase(), i);
+      // Labels often print 16587 but the barcode reads 000000016587 (or the other way round): match digits without leading zeros too.
+      if (/^\d+$/.test(b)) { const z = '#' + String(b).replace(/^0+/, ''); if (!BYCODE.has(z)) BYCODE.set(z, i); }
+    });
+  }
+}
+const codeGet = (v) => BYCODE.get(v) || (/^\d+$/.test(v) ? BYCODE.get('#' + v.replace(/^0+/, '')) : undefined);
+const lowOf = (i) => +i.stock <= (+i.reorder_level > 0 ? +i.reorder_level : +((ctx && ctx.settings && ctx.settings.low_stock_threshold) || 10));
+
+async function loadMaster(regId) {
+  const m = await api('master', null, { register_id: regId });
+  await setItems(m.items);
+  const prev = await mget('ctx');
+  const curSeq = (await mget('seq')) || 0;
+  // Another register's counter must never leak in: on a register change, trust the server.
+  if (!prev || prev.register.id !== m.register.id) await mset('seq', m.last_seq);
+  else if (m.last_seq > curSeq) await mset('seq', m.last_seq);
+  ctx = { company: m.company, shop: m.shop, register: m.register, settings: m.settings || {} };
+  await mset('ctx', ctx);
+}
+
+/* ---------- offline return credentials ---------- */
+// A manager who approves online can be remembered on this device. Only a salted hash is stored.
+function credSalt() { let s = localStorage.getItem('fc_salt'); if (!s) { s = uuid(); localStorage.setItem('fc_salt', s); } return s; }
+async function credHash(s) {
+  if (crypto.subtle && crypto.subtle.digest) {
+    const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
+    return [...new Uint8Array(b)].map((x) => x.toString(16).padStart(2, '0')).join('');
+  }
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619);
+  return 'f' + (h >>> 0).toString(16);
+}
+function credList() { try { return JSON.parse(localStorage.getItem('fc_authcache') || '[]'); } catch (e) { return []; } }
+async function cacheCred(username, alias, password, role, name) {
+  if (!['owner', 'manager', 'accountant'].includes(role) || !username || !password) return;
+  const u = String(username).toLowerCase();
+  const h = await credHash(credSalt() + '|' + u + '|' + password);
+  const list = credList().filter((x) => x.u !== u);
+  list.push({ u, a: String(alias || '').toLowerCase(), n: name || username, r: role, h });
+  localStorage.setItem('fc_authcache', JSON.stringify(list.slice(-5)));
+}
+async function checkOfflineCred(login, password) {
+  const l = String(login).toLowerCase();
+  const c = credList().find((x) => x.u === l || x.a === l);
+  if (!c) return null;
+  return (await credHash(credSalt() + '|' + c.u + '|' + password)) === c.h ? c : null;
+}
+
+/* ---------- login ---------- */
+let loginOrg = null;
+document.addEventListener('click', async (e) => {
+  if (!e.target.closest || !e.target.closest('#forgotLink')) return;
+  e.preventDefault();
+  const who = $('#em').value.trim() || prompt('Enter your username or email');
+  if (!who) return;
+  try { await api('forgot', { login: who }); } catch (err) { /* same answer either way */ }
+  $('#loginErr').textContent = 'If that is an owner account, Adnys has been notified and will contact you. Other users: ask your owner to reset your password.';
+});
+function showLogin() { $('#app').classList.add('hidden'); $('#login').classList.remove('hidden'); }
+$('#loginForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  $('#loginErr').textContent = '';
+  $('#loginBtn').disabled = true;
+  try {
+    if (!loginOrg) {
+      const typed = $('#em').value.trim(), pass = $('#pw').value;
+      const r = await api('login', { email: typed, password: pass });
+      if (r.user.role === 'stocker') { try { localStorage.setItem('fc_bw', '1'); } catch (x) { /* ignore */ } location.href = '../stock/'; return; }   // stockers count stock in the Back office
+      cfg = { token: r.token, user: r.user, regId: null, settings: r.settings || {} };
+      loginOrg = r.org;
+      // Let a manager who signs in here approve returns even when the line drops later.
+      await cacheCred(r.user.username || typed, typed, pass, r.user.role, r.user.name);
+      if (!loginOrg.registers.length) throw new Error('no_register_assigned');
+      const sel = $('#regsel'); sel.innerHTML = '';
+      for (const reg of loginOrg.registers) {
+        const shop = loginOrg.shops.find((s) => s.id === reg.shop_id);
+        sel.add(new Option(`${shop ? shop.name : 'Shop'} - ${reg.code}`, reg.id));
+      }
+      const saved = JSON.parse(localStorage.getItem('fc_cfg') || 'null');
+      if (saved && saved.regId) sel.value = saved.regId;
+      if (loginOrg.registers.length === 1 || (saved && saved.regId && sessionExpired)) {
+        await finishLogin(+sel.value);
+      } else {
+        $('#step1').classList.add('hidden'); $('#step2').classList.remove('hidden'); $('#loginBtn').textContent = 'Open register';
+      }
+    } else {
+      await finishLogin(+$('#regsel').value);
+    }
+  } catch (err) {
+    $('#loginErr').textContent = ({ invalid_login: 'Wrong username/email or password.', too_many_attempts: 'Too many attempts. Wait 15 minutes.', no_register_assigned: 'No register is set up for this user.', stocker_no_pos: 'Stocker logins use the Stock take app (stock/).' })[err.message] || (navigator.onLine ? 'Could not sign in (' + err.message + ').' : 'No internet. Sign-in needs a connection.');
+    loginOrg = null;
+  } finally { $('#loginBtn').disabled = false; }
+});
+async function finishLogin(regId) {
+  cfg.regId = regId;
+  await loadMaster(regId);
+  localStorage.setItem('fc_cfg', JSON.stringify(cfg));
+  loginOrg = null; sessionExpired = false;
+  $('#step1').classList.remove('hidden'); $('#step2').classList.add('hidden'); $('#loginBtn').textContent = 'Sign in'; $('#pw').value = '';
+  $('#login').classList.add('hidden');
+  await startApp();
+}
+
+/* ---------- app ---------- */
+async function startApp() {
+  ITEMS = await allOf('items'); indexItems();
+  $('#where').textContent = `${ctx.company.name} / ${ctx.shop.name} / ${ctx.register.code}` + (ctx.shop.group_code ? ` · group ${ctx.shop.group_code}` : '');
+  $('#curLbl').textContent = CUR();
+  $('#app').classList.remove('hidden');
+  renderResults(''); renderCart(); renderHolds(); updateBadge();
+  $('#scan').focus();
+  purgeOldSynced();
+  syncNow();
+}
+
+function applyWatermark() {
+  const wm = $('#wm'); if (!wm || !ctx) return;
+  const logo = (ctx.shop && ctx.shop.logo) || (ctx.company && ctx.company.logo) || '';
+  const pct = ctx.settings && ctx.settings.watermark_opacity != null ? +ctx.settings.watermark_opacity : 15;
+  wm.style.backgroundImage = logo && pct > 0 ? 'url("' + String(logo).replace(/"/g, '') + '")' : 'none';
+  wm.style.opacity = String(Math.max(0, Math.min(40, pct)) / 100);
+}
+function renderResults(q) {
+  applyWatermark();
+  q = q.trim().toLowerCase();
+  let list = ITEMS;
+  if (q) list = ITEMS.filter((i) => i.name.toLowerCase().includes(q) || (i.name_ar || '').includes(q) || String(i.sku).toLowerCase().includes(q) || (i.barcodes || []).some((b) => String(b).toLowerCase().includes(q)));
+  if (lowOnly) list = list.filter(lowOf);
+  $('#results').innerHTML = list.slice(0, 80).map((i) => {
+    const low = lowOf(i);
+    return `<button class="tile ${low ? 'low' : ''}" data-id="${i.id}"><span class="n">${esc(i.name)}</span><span class="p">${f2(i.price)}<span class="vi">incl. VAT</span></span><span class="s ${low ? 'low' : ''}">${esc(i.sku)} · stock ${+i.stock}${low ? ' · LOW' : ''}</span></button>`;
+  }).join('') || '<div style="color:var(--mute)">No item found</div>';
+}
+$('#results').addEventListener('click', (e) => { const b = e.target.closest('.tile'); if (b) addItem(+b.dataset.id); });
+$('#scan').addEventListener('input', (e) => renderResults(e.target.value));
+$('#scan').addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter') return;
+  e.preventDefault();
+  let v = e.target.value.trim().toLowerCase();
+  if (!v) return;
+  let n = 1;
+  const qm = v.match(/^(\d+(?:\.\d+)?)\s*[*x×]\s*(.+)$/);      // "12*code" adds 12 of that item
+  let it = codeGet(v);
+  if (!it && qm && +qm[1] > 0) { n = +qm[1]; v = qm[2].trim(); it = codeGet(v); }
+  if (!it) {
+    const hits = ITEMS.filter((i) => i.name.toLowerCase().includes(v));
+    if (hits.length === 1) it = hits[0];
+  }
+  if (it) { addItem(it.id, n); e.target.value = ''; renderResults(''); }
+  else { e.target.select(); }
+});
+function updateModeButton() {
+  $('#btnMode').textContent = returnMode ? 'RETURN mode' : 'Sale mode';
+  $('#btnMode').className = returnMode ? 'bad' : 'sec';
+}
+$('#btnMode').addEventListener('click', () => { returnMode = !returnMode; updateModeButton(); $('#scan').focus(); });
+$('#btnLow').addEventListener('click', () => {
+  lowOnly = !lowOnly;
+  $('#btnLow').className = lowOnly ? '' : 'sec';
+  renderResults($('#scan').value);
+});
+
+function addItem(id, n) {
+  const it = ITEMS.find((i) => i.id === id); if (!it) return;
+  const sign = returnMode ? -1 : 1, step = sign * (n > 0 ? n : 1);
+  const line = cart.find((l) => l.id === id && Math.sign(l.qty) === sign);
+  if (line) line.qty = Math.round((line.qty + step) * 1000) / 1000; else cart.push({ id, qty: step, disc: 0 });
+  renderCart(); $('#scan').focus();
+}
+const itemOf = (id) => ITEMS.find((i) => i.id === id);
+function lineCalc(l) {
+  const it = itemOf(l.id); const gross = r2(l.qty * it.price);
+  const d = Math.min(Math.abs(l.disc || 0), Math.abs(gross)) * Math.sign(gross);   // signed like the line
+  const total = r2(gross - d);
+  return { it, gross, d: r2(d), total, vat: r2(total * it.vat_rate / (100 + it.vat_rate)) };
+}
+function cartTotals() {
+  let total = 0, vat = 0; const rates = new Set();
+  for (const l of cart) { const c = lineCalc(l); total += c.total; vat += c.vat; rates.add(+c.it.vat_rate || 0); }
+  return { total: r2(total), vat: r2(vat), net: r2(total - vat), rate: rates.size === 1 ? [...rates][0] : null };
+}
+function renderCart() {
+  $('#cart').innerHTML = cart.length ? `<table><tr><th>Item</th><th>Qty</th><th>Disc</th><th class="r">Total</th><th></th></tr>${cart.map((l, i) => {
+    const c = lineCalc(l);
+    return `<tr><td>${esc(c.it.name)}<div style="font-size:12px;color:var(--mute)">${f2(c.it.price)} incl. VAT${l.qty < 0 ? ' · <b style="color:var(--bad)">RETURN</b>' : ''}${l.qty > 0 && l.qty > +c.it.stock ? ` · <b style="color:var(--bad)">only ${+c.it.stock} in stock</b>` : ''}</div></td>
+      <td class="qc"><button class="qs sec" data-st="-1" data-i="${i}" type="button">−</button><input class="q" type="number" step="any" value="${l.qty}" data-i="${i}" data-f="qty" inputmode="decimal"><button class="qs sec" data-st="1" data-i="${i}" type="button">+</button></td>
+      <td><input class="d" type="number" step="0.01" min="0" value="${l.disc || ''}" placeholder="0" data-i="${i}" data-f="disc"></td>
+      <td class="r">${f2(c.total)}</td><td><button class="x" data-rm="${i}">×</button></td></tr>`;
+  }).join('')}</table>` : '<div style="color:var(--mute);padding:20px 0;text-align:center">Scan an item to start</div>';
+  const t = cartTotals();
+  $('#tNet').textContent = f2(t.net); $('#tVat').textContent = f2(t.vat); $('#tTotal').textContent = f2(t.total);
+  $('#vatLbl').textContent = t.rate === null ? (cart.length ? 'VAT (mixed rates)' : 'VAT 5%') : 'VAT ' + t.rate + '%';
+  $('#btnPay').disabled = !cart.length;
+}
+$('#cart').addEventListener('change', (e) => {
+  const i = e.target.dataset.i; if (i === undefined) return;
+  const l = cart[+i]; let v = parseFloat(e.target.value);
+  if (e.target.dataset.f === 'qty') {
+    if (!isFinite(v) || v === 0) cart.splice(+i, 1); else l.qty = Math.round(v * 1000) / 1000;
+  } else l.disc = isFinite(v) && v > 0 ? v : 0;
+  renderCart();
+});
+$('#cart').addEventListener('click', (e) => {
+  const st = e.target.closest('[data-st]');
+  if (st) { const l = cart[+st.dataset.i]; l.qty = Math.round((l.qty + (+st.dataset.st) * Math.sign(l.qty || 1)) * 1000) / 1000; if (l.qty === 0) cart.splice(+st.dataset.i, 1); renderCart(); return; }
+  const b = e.target.closest('[data-rm]'); if (b) { cart.splice(+b.dataset.rm, 1); renderCart(); } });
+$('#btnClear').addEventListener('click', () => { cart = []; renderCart(); $('#scan').focus(); });
+
+/* ---------- holds ---------- */
+$('#btnHold').addEventListener('click', () => {
+  if (!cart.length) return;
+  $('#holdNote').value = '';
+  $('#holdDlg').showModal();
+  setTimeout(() => $('#holdNote').focus(), 50);
+});
+$('#holdCancel').addEventListener('click', () => $('#holdDlg').close());
+$('#holdSave').addEventListener('click', async () => {
+  await saveHold($('#holdNote').value.trim());
+  cart = []; renderCart(); renderHolds(); $('#holdDlg').close(); $('#scan').focus();
+});
+async function resumeHold(id) {
+  const h = (await holdAll()).find((x) => x.id === id);
+  if (!h) return;
+  if (cart.length && !confirm('Hold the current bill and open the selected one?')) return;
+  if (cart.length) await saveHold('Auto-held before opening another bill');
+  cart = h.lines.map((l) => ({ id: l.id, qty: l.qty, disc: l.disc || 0 }));
+  returnMode = !!h.return_mode; updateModeButton();
+  await holdDel(id); renderCart(); renderHolds(); $('#scan').focus();
+}
+setInterval(() => { if (!$('#app').classList.contains('hidden')) renderHolds(); }, 30000);
+
+/* ---------- payment ---------- */
+let dueTotal = 0;
+$('#btnPay').addEventListener('click', () => {
+  if (!cart.length) return;
+  const over = cart.filter((l) => l.qty > 0 && l.qty > +itemOf(l.id).stock).map((l) => `${itemOf(l.id).name}: selling ${l.qty}, stock ${+itemOf(l.id).stock}`);
+  if (over.length && !confirm('Stock check - not enough stock recorded for:\n\n' + over.join('\n') + '\n\nSell anyway? (Stock records may be behind. Use + Add stock if goods were received.)')) return;
+  dueTotal = cartTotals().total;
+  $('#payErr').textContent = '';
+  const refund = dueTotal < 0;
+  $('#payTitle').textContent = refund ? 'Refund / return' : 'Payment';
+  $('#payDue').textContent = (refund ? 'Refund ' : '') + CUR() + ' ' + f2(Math.abs(dueTotal));
+  $('#payIn').classList.toggle('hidden', refund || dueTotal === 0);
+  $('#refundIn').classList.toggle('hidden', !refund);
+  $('#authBox').classList.toggle('hidden', !refund);
+  $('#authUser').value = ''; $('#authPass').value = ''; $('#authRemember').checked = true;
+  $('#authHint').textContent = navigator.onLine ? 'Approved online. It can be remembered for offline returns.' : 'Offline: use a manager who has already approved on this device.';
+  $('#payOk').textContent = refund ? 'Complete return' : 'Complete sale';
+  $('#payCash').value = refund ? '0' : f2(dueTotal); $('#payCard').value = '0';
+  $('#custName').value = ''; $('#custTrn').value = ''; $('#custPhone').value = ''; $('#custOffers').checked = false;
+  const tt = cartTotals();
+  $('#payVat').innerHTML = `<div><span>Sale amount (excl. VAT)</span><b>${f2(tt.net)}</b></div><div><span>${tt.rate === null ? 'VAT' : 'VAT ' + tt.rate + '%'}</span><b>${f2(tt.vat)}</b></div>`;
+  setPayMode('cash'); $('#payDlg').showModal();
+  if (!refund) setTimeout(() => $('#payCash').focus(), 50);
+});
+function updateChange() {
+  const due = Math.max(dueTotal, 0);
+  const cash = parseFloat($('#payCash').value) || 0;
+  const card = payMode === 'cash' ? 0 : Math.min(Math.max(parseFloat($('#payCard').value) || 0, 0), due);
+  const cashDue = r2(Math.max(0, due - card));
+  $('#payChg').textContent = f2(Math.max(0, cash - cashDue));
+}
+// Payment mode: Cash, Card, or Cash + Card (typing cash fills the rest on card: total 350, cash 50 -> card 300).
+let payMode = 'cash';
+function setPayMode(m) {
+  payMode = m;
+  document.querySelectorAll('#payMode button').forEach((b) => b.classList.toggle('on', b.dataset.m === m));
+  const due = Math.max(dueTotal, 0);
+  $('#payCashWrap').style.display = m === 'card' ? 'none' : '';
+  $('#payCardWrap').style.display = m === 'split' ? '' : 'none';
+  $('#payChgRow').style.display = m === 'card' ? 'none' : '';
+  $('#payCash').value = ''; $('#payCard').value = '0';
+  if (m === 'card') $('#payCard').value = f2(due);
+  $('#payCashLbl').textContent = m === 'split' ? 'Cash from customer' : 'Cash received';
+  $('#payCash').placeholder = m === 'split' ? 'Type the cash, card fills the rest' : 'Leave empty for exact cash';
+  updateChange();
+  if (m !== 'card') $('#payCash').focus();
+}
+$('#payMode').addEventListener('click', (e) => { const b = e.target.closest('[data-m]'); if (b) setPayMode(b.dataset.m); });
+$('#payCash').addEventListener('input', () => {
+  if (payMode === 'split') {
+    const due = Math.max(dueTotal, 0), cash = parseFloat($('#payCash').value) || 0;
+    $('#payCard').value = cash >= due ? '0' : f2(r2(due - cash));
+  }
+  updateChange();
+});
+$('#payCard').addEventListener('input', () => {
+  if (payMode === 'split') {
+    const due = Math.max(dueTotal, 0), card = Math.min(Math.max(parseFloat($('#payCard').value) || 0, 0), due);
+    $('#payCash').value = card >= due ? '' : f2(r2(due - card));
+  }
+  updateChange();
+});
+$('#payCancel').addEventListener('click', () => $('#payDlg').close());
+
+async function authoriseReturn() {
+  const login = $('#authUser').value.trim(), pass = $('#authPass').value;
+  if (!login || !pass) throw new Error('Enter the authorised person\'s username and password.');
+  if (navigator.onLine) {
+    try {
+      const r = await api('authorize', { username: login, password: pass, purpose: 'return' });
+      if ($('#authRemember').checked) await cacheCred(r.authorised_by.username, login, pass, r.authorised_by.role, r.authorised_by.name);
+      return { token: r.token, by: r.authorised_by.username, name: r.authorised_by.name, role: r.authorised_by.role, offline: false };
+    } catch (e) {
+      throw new Error(({ invalid_authoriser: 'Wrong manager username or password.', not_authorised_role: 'That person is not a manager, accountant or owner.', too_many_attempts: 'Too many attempts. Wait 15 minutes.' })[e.message] || e.message);
+    }
+  }
+  const c = await checkOfflineCred(login, pass);
+  if (!c) throw new Error('Offline: this person has not approved on this device yet. Ask a manager to sign in once while online.');
+  return { offline: true, by: c.u, name: c.n, role: c.r };
+}
+
+$('#payOk').addEventListener('click', async () => {
+  const refund = dueTotal < 0; let payments = [], tendered = 0, change = 0, auth = null;
+  $('#payErr').textContent = '';
+  if (refund) {
+    try { auth = await authoriseReturn(); } catch (e) { $('#payErr').textContent = e.message; return; }
+    payments = [{ method: $('#refMethod').value, amount: dueTotal }];
+  } else if (dueTotal > 0) {
+    let cash = parseFloat($('#payCash').value) || 0, card = Math.max(parseFloat($('#payCard').value) || 0, 0);
+    if (payMode === 'card') { card = dueTotal; cash = 0; }
+    else if (payMode === 'cash') { card = 0; if (!$('#payCash').value.trim()) cash = dueTotal; }
+    const cardApplied = Math.min(card, dueTotal), cashDue = r2(dueTotal - cardApplied);
+    if (cash + 0.001 < cashDue) { $('#payErr').textContent = 'Cash received is less than the amount due.'; return; }
+    tendered = cash; change = r2(Math.max(0, cash - cashDue));
+    if (cashDue > 0) payments.push({ method: 'cash', amount: cashDue });
+    if (cardApplied > 0) payments.push({ method: 'card', amount: r2(cardApplied) });
+  }
+  $('#payOk').disabled = true;
+  try {
+    const snap = cart.map((l) => { const c = lineCalc(l); return { item_id: l.id, name: c.it.name, name_ar: c.it.name_ar, qty: l.qty, unit_price: c.it.price, discount: c.d, vat_rate: c.it.vat_rate, total: c.total }; });
+    const t = cartTotals();
+    const sale = await saveSale((seq) => ({
+      uuid: uuid(), seq, register_id: ctx.register.id,
+      invoice_no: `${ctx.shop.code}-${ctx.register.code}-${String(seq).padStart(6, '0')}`,
+      sold_at: nowDubai(),
+      lines: snap.map((s) => ({ item_id: s.item_id, qty: s.qty, unit_price: s.unit_price, discount: s.discount })),
+      payments, customer_name: $('#custName').value.trim() || null, customer_trn: $('#custTrn').value.trim() || null,
+      customer_phone: cleanPhone($('#custPhone').value), offers_ok: !!($('#custOffers').checked && cleanPhone($('#custPhone').value)),
+      auth_token: auth && auth.token ? auth.token : null,
+      auth_offline: !!(auth && auth.offline),
+      authorised_by: auth ? auth.by : null,
+      status: 'pending', saved_at: Date.now(), error: null,
+      rc: { lines: snap, total: t.total, vat: t.vat, net: r2(t.total - t.vat), tendered, change, cashier: cfg.user.name,
+            authorised_name: auth ? auth.name : null, authorised_by: auth ? auth.by : null, auth_ref: auth ? (auth.offline ? 'offline' : 'token') : null },
+    }));
+    $('#payDlg').close();
+    for (const s2 of snap) { const it2 = itemOf(s2.item_id); if (it2) it2.stock = Math.round((+it2.stock - s2.qty) * 1000) / 1000; }   // keep on-screen stock honest, even offline
+    try { await setItems(ITEMS); } catch (e) { /* ignore */ }
+    cart = []; renderCart(); renderHolds(); renderResults($('#scan').value); updateBadge(); syncNow();
+    showDone(sale);
+  } catch (err) { $('#payErr').textContent = 'Could not save the sale: ' + err.message; }
+  finally { $('#payOk').disabled = false; }
+});
+
+/* ---------- printing ---------- */
+function setPage(size) { document.getElementById('pageRule').textContent = '@page{size:' + size + '}'; }
+function printA4(html) {
+  $('#a4').innerHTML = html;
+  setPage('A4;margin:10mm');
+  document.body.classList.add('a4print');
+  setTimeout(() => window.print(), 140);
+}
+addEventListener('afterprint', () => {
+  document.body.classList.remove('a4print');
+  setPage('80mm auto;margin:0');
+});
+const logoImg = (src, style) => src ? `<img src="${esc(src)}" alt="" style="${style}">` : '';
+
+/* ---------- receipt (80mm thermal, Arabic + English) ---------- */
+function cleanPhone(v) {
+  let d = String(v || '').replace(/\D+/g, '');
+  if (!d) return null;
+  if (d.startsWith('00')) d = d.slice(2);
+  else if (d.startsWith('05') && d.length === 10) d = '971' + d.slice(1);
+  else if (d.startsWith('5') && d.length === 9) d = '971' + d;
+  return d.length >= 8 && d.length <= 15 ? d : null;
+}
+function vatSummary(lines) {
+  const m = {};
+  for (const l of lines) {
+    const r = +l.vat_rate || 0, v = r2(l.total * r / (100 + r));
+    const o = m[r] || (m[r] = { rate: r, gross: 0, vat: 0 }); o.gross += l.total; o.vat += v;
+  }
+  return Object.values(m).map((o) => ({ rate: o.rate, net: r2(o.gross - o.vat), vat: r2(o.vat) }));
+}
+function thanksText() {
+  const st = ctx.settings || {};
+  return st.thank_you || 'Thank you for shopping with us! We hope to see you again. / شكراً لتسوقكم معنا';
+}
+function verifyUrl(s) { return new URL('../verify/?s=' + encodeURIComponent(s.uuid), location.href).href; }
+function qrFor(s) {
+  if (ctx && ctx.settings && +ctx.settings.qr_enabled === 0) return null;
+  try { return { svg: FlexQR.svg(verifyUrl(s), 120), cap: 'Scan to verify this bill / امسح للتحقق من الفاتورة' }; } catch (e) { return null; }
+}
+function printReceipt(s) {
+  const c = ctx.company, rc = s.rc, isRet = rc.total < 0, cur = esc(CUR());
+  const rows = rc.lines.map((l) => `<tr><td colspan="3">${esc(l.name)}${l.name_ar ? ' / ' + esc(l.name_ar) : ''}</td></tr>
+    <tr><td>${l.qty} x ${f2(l.unit_price)}${l.discount ? ' (-' + f2(Math.abs(l.discount)) + ')' : ''}</td><td></td><td style="text-align:right">${f2(l.total)}</td></tr>`).join('');
+  const vs = vatSummary(rc.lines);
+  const qr = qrFor(s);
+  $('#receipt').innerHTML = `
+    ${logoImg(c.logo, 'max-height:58px;max-width:100%;display:block;margin:0 auto 4px')}
+    <h2>${esc(c.name)}</h2>${c.name_ar ? `<div class="c">${esc(c.name_ar)}</div>` : ''}
+    <div class="c">${esc(c.address || '')}${c.phone ? '<br>' + esc(c.phone) : ''}</div>
+    <div class="c"><b>TRN: ${esc(c.trn || '-')}</b></div><hr>
+    <div class="c"><b>${isRet ? 'CREDIT NOTE / إشعار دائن' : 'TAX INVOICE / فاتورة ضريبية'}</b></div>
+    <div>No: ${esc(s.invoice_no)}</div><div>Date: ${esc(s.sold_at)}</div>
+    <div>Shop: ${esc(ctx.shop.name)} (${esc(ctx.shop.code)}) · Cashier: ${esc(rc.cashier)}</div>
+    ${logoImg(ctx.shop.logo, 'max-height:36px;max-width:70%;display:block;margin:4px auto')}
+    ${s.customer_name ? `<div>Customer: ${esc(s.customer_name)}${s.customer_trn ? ' · TRN ' + esc(s.customer_trn) : ''}</div>` : ''}
+    ${rc.authorised_name ? `<div>Approved by: ${esc(rc.authorised_name)}${rc.authorised_by ? ' (' + esc(rc.authorised_by) + ')' : ''}</div>` : ''}
+    <hr><table>${rows}</table><hr>
+    <div style="font-size:11px">Prices include VAT / الأسعار شاملة الضريبة</div>
+    ${vs.map((v) => `<div class="t"><span>Amount excl. VAT ${v.rate}%</span><span>${f2(v.net)}</span></div><div class="t"><span>VAT ${v.rate}% / ضريبة</span><span>${f2(v.vat)}</span></div>`).join('')}
+    <div class="t"><b>TOTAL ${cur} / الإجمالي</b><b>${f2(rc.total)}</b></div><hr>
+    ${s.payments.map((p) => `<div class="t"><span>${esc(p.method.toUpperCase())}</span><span>${f2(p.amount)}</span></div>`).join('')}
+    ${rc.change > 0 ? `<div class="t"><span>Cash received</span><span>${f2(rc.tendered)}</span></div><div class="t"><span>Change</span><span>${f2(rc.change)}</span></div>` : ''}
+    <hr><div class="thx">${thanksText().split(' / ').map(esc).join('<br>')}</div>${ctx.settings.receipt_note ? `<div class="c">${esc(ctx.settings.receipt_note)}</div>` : ''}
+    ${ctx.settings.qr_url ? `<div class="c" style="font-size:10px">Review us: ${esc(ctx.settings.qr_url)}</div>` : ''}
+    ${qr ? qr.svg + `<div class="c" style="font-size:10px">${esc(qr.cap)}</div>` : ''}
+    <div class="c" style="font-size:10px;margin-top:4px">Powered by Adnys</div>`;
+  setPage('80mm auto;margin:0');
+  document.body.classList.remove('a4print');
+  setTimeout(() => window.print(), 120);
+}
+
+/* ---------- bill as text (WhatsApp / share sheet) ---------- */
+function billText(s) {
+  const c = ctx.company, rc = s.rc, cur = CUR(), isRet = rc.total < 0;
+  const lines = rc.lines.map((l) => `${l.qty} x ${l.name}  ${f2(l.total)}`).join('\n');
+  const vs = vatSummary(rc.lines).map((v) => `VAT ${v.rate}%: ${cur} ${f2(v.vat)}`).join('\n');
+  const pays = s.payments.map((p) => `${p.method}: ${f2(p.amount)}`).join(', ');
+  return [`*${c.name}*${ctx.shop && ctx.shop.name ? ' · ' + ctx.shop.name : ''}`, c.trn ? `TRN ${c.trn}` : '',
+    `${isRet ? 'Credit note' : 'Tax invoice'} ${s.invoice_no}`, s.sold_at, '', lines, '',
+    `Amount excl. VAT: ${cur} ${f2(rc.net)}`, vs, `*Total ${cur} ${f2(rc.total)}* (incl. VAT)`, pays ? 'Paid by ' + pays : '', '',
+    thanksText(), (ctx.settings && +ctx.settings.qr_enabled === 0 ? '' : 'Verify this bill: ' + verifyUrl(s)), (ctx.settings && ctx.settings.qr_url) ? 'Review us: ' + ctx.settings.qr_url : '', 'Powered by Adnys'].filter((x, i, a) => x !== '' || (a[i - 1] !== '' && i)).join('\n');
+}
+async function sendWhatsApp(s, typed) {
+  let phone = cleanPhone(typed || s.customer_phone);
+  if (!phone) {
+    const v = prompt('Customer WhatsApp number (e.g. 050 123 4567):', '');
+    if (v === null) return;
+    phone = cleanPhone(v);
+    if (!phone) { alert('That does not look like a mobile number.'); return; }
+  }
+  if (s.status === 'pending' && phone !== s.customer_phone) { s.customer_phone = phone; try { await putSale(s); } catch (e) { /* number just not stored */ } }
+  window.open('https://wa.me/' + phone + '?text=' + encodeURIComponent(billText(s)), '_blank');
+}
+async function shareBill(s) {
+  const text = billText(s), title = 'Bill ' + s.invoice_no;
+  try {
+    if (navigator.share) { await navigator.share({ title, text }); return; }
+    if (navigator.clipboard) { await navigator.clipboard.writeText(text); alert('Bill copied. Paste it into any app.'); return; }
+    alert('Sharing is not available in this browser. Use WhatsApp or Print.');
+  } catch (e) { if (!e || e.name !== 'AbortError') alert('Could not share: ' + e.message); }
+}
+
+/* ---------- camera barcode scanner ---------- */
+let camStream = null, camTimer = null, camReader = null, camCb = null;
+function beep() { try { const a = new (window.AudioContext || window.webkitAudioContext)(), o = a.createOscillator(); o.frequency.value = 1000; o.connect(a.destination); o.start(); setTimeout(() => { o.stop(); a.close(); }, 110); } catch (e) { /* ignore */ } }
+function loadScript(src) { return new Promise((res, rej) => { const s = document.createElement('script'); s.src = src; s.onload = res; s.onerror = () => rej(new Error('load')); document.head.appendChild(s); }); }
+async function openCam(cb) {
+  camCb = cb; const msg = $('#camMsg'), v = $('#camVid');
+  msg.textContent = 'Starting camera...'; $('#camDlg').showModal();
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { msg.textContent = 'Camera is not available here (it needs https and a camera).'; return; }
+  try { camStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false }); }
+  catch (e) { msg.textContent = 'Camera blocked. Allow camera access for this site and try again.'; return; }
+  v.srcObject = camStream; try { await v.play(); } catch (e) { /* ignore */ }
+  msg.textContent = 'Point the camera at a barcode.';
+  let last = '', lastAt = 0;
+  const hit = (code) => { const now = Date.now(), same = code === last && now - lastAt < 2500; last = code; lastAt = now; if (same) return; camCb && camCb(String(code).trim()); };   // code held in view = one add
+  try {
+    if ('BarcodeDetector' in window) {
+      const det = new BarcodeDetector();
+      camTimer = setInterval(async () => { try { const r = await det.detect(v); if (r[0]) hit(r[0].rawValue); } catch (e) { /* ignore */ } }, 250);
+    } else {
+      if (!window.ZXing) await loadScript('../assets/zxing.min.js');
+      camReader = new ZXing.BrowserMultiFormatReader();
+      camReader.decodeFromStream(camStream, v, (res) => { if (res) hit(res.getText()); }).catch(() => {});
+    }
+  } catch (e) { msg.textContent = 'Scanner could not start. Check your connection once, then try again.'; }
+}
+function closeCam() {
+  clearInterval(camTimer); camTimer = null;
+  try { camReader && camReader.reset(); } catch (e) { /* ignore */ } camReader = null;
+  if (camStream) camStream.getTracks().forEach((t) => t.stop()); camStream = null;
+  if ($('#camDlg').open) $('#camDlg').close();
+}
+$('#camDone').addEventListener('click', () => { closeCam(); $('#scan').focus(); });
+$('#camDlg').addEventListener('close', closeCam);
+$('#btnCam').addEventListener('click', () => openCam((code) => {
+  const it = codeGet(code.toLowerCase());
+  if (it) { beep(); addItem(it.id, 1); $('#camMsg').innerHTML = `Added: <b>${esc(it.name)}</b> (x${cart.filter((l) => l.id === it.id).reduce((a, l) => a + l.qty, 0)}) - scan next or press Done`; }
+  else $('#camMsg').innerHTML = `<b style="color:var(--bad)">Code ${esc(code)} is not registered.</b>`;
+}));
+
+/* ---------- add received stock (online) ---------- */
+function skFind(v) {
+  v = String(v || '').trim().toLowerCase();
+  return ITEMS.find((i) => (i.sku + ' · ' + i.name).toLowerCase() === v || String(i.sku).toLowerCase() === v || (i.barcodes || []).some((b) => String(b).toLowerCase() === v) || i.name.toLowerCase() === v) || null;
+}
+function skShow() {
+  const it = skFind($('#skItem').value), box = $('#skInfo');
+  box.style.display = it ? '' : 'none';
+  if (it) box.innerHTML = `<div><span>${esc(it.name)}</span><b>${f2(it.price)} incl. VAT</b></div><div><span>Stock now</span><b>${+it.stock}</b></div>`;
+}
+$('#btnStockIn').addEventListener('click', () => {
+  $('#skList').innerHTML = ITEMS.slice(0, 500).map((i) => `<option value="${esc(i.sku + ' · ' + i.name)}"></option>`).join('');
+  $('#skItem').value = ''; $('#skQty').value = ''; $('#skNote').value = ''; $('#skUser').value = ''; $('#skPass').value = ''; $('#skErr').textContent = ''; $('#skInfo').style.display = 'none';
+  $('#skAuth').style.display = cfg && cfg.user && ['owner', 'manager', 'accountant'].includes(cfg.user.role) ? 'none' : '';
+  $('#stockDlg').showModal(); $('#skItem').focus();
+});
+$('#skItem').addEventListener('input', skShow);
+$('#skCam').addEventListener('click', () => openCam((code) => {
+  const it = codeGet(code.toLowerCase());
+  if (it) { beep(); $('#skItem').value = it.sku; skShow(); closeCam(); $('#skQty').focus(); }
+  else $('#camMsg').innerHTML = `<b style="color:var(--bad)">Code ${esc(code)} is not registered.</b>`;
+}));
+$('#skCancel').addEventListener('click', () => $('#stockDlg').close());
+$('#skOk').addEventListener('click', async () => {
+  const err = (m) => { $('#skErr').textContent = m; };
+  const it = skFind($('#skItem').value), qty = parseFloat($('#skQty').value);
+  if (!it) return err('Choose a registered product from the list.');
+  if (!(qty > 0)) return err('Enter the quantity received.');
+  if (!navigator.onLine) return err('Stock can only be added while online.');
+  $('#skOk').disabled = true; err('');
+  try {
+    const body = { shop_id: ctx.shop.id, item_id: it.id, qty, note: $('#skNote').value.trim() };
+    if ($('#skAuth').style.display !== 'none') {
+      const u = $('#skUser').value.trim(), p = $('#skPass').value;
+      if (!u || !p) { $('#skOk').disabled = false; return err('Enter the authorised person\'s username and password.'); }
+      body.auth_token = (await api('authorize', { username: u, password: p, purpose: 'stock' })).token;
+    }
+    const r = await api('pos_stock_add', body);
+    it.stock = r.stock; await setItems(ITEMS); renderResults($('#scan').value);
+    $('#stockDlg').close();
+    alert(`${it.name}: stock now ${+r.stock}`);
+  } catch (e) {
+    err(({ invalid_authoriser: 'Wrong username or password.', not_authorised_role: 'That person is not a manager, accountant or owner.', stock_needs_authorisation: 'Authorisation needed.', too_many_attempts: 'Too many attempts. Wait 15 minutes.', session_expired: 'Session expired. Sign in again.' })[e.message] || e.message);
+  } finally { $('#skOk').disabled = false; }
+});
+
+/* ---------- after the sale ---------- */
+let doneSale = null;
+function showDone(s) {
+  doneSale = s;
+  const refund = s.rc.total < 0;
+  $('#doneIcon').innerHTML = ic('check');
+  $('#doneTitle').textContent = refund ? 'Return recorded' : 'Sale complete';
+  $('#doneMeta').textContent = `${s.invoice_no} · ${CUR()} ${f2(Math.abs(s.rc.total))} incl. VAT ${f2(Math.abs(s.rc.vat))}`;
+  $('#doneChg').textContent = s.rc.change > 0 ? 'Change ' + CUR() + ' ' + f2(s.rc.change) : '';
+  $('#doneWa').value = s.customer_phone ? '+' + s.customer_phone : '';
+  $('#autoPrint').checked = localStorage.getItem('fc_autoprint') !== '0';
+  $('#doneDlg').showModal();
+  if ($('#autoPrint').checked) setTimeout(() => printReceipt(s), 200);
+}
+$('#doneWaBtn').addEventListener('click', () => doneSale && sendWhatsApp(doneSale, $('#doneWa').value));
+$('#doneShare').addEventListener('click', () => doneSale && shareBill(doneSale));
+$('#donePrint').addEventListener('click', () => doneSale && printReceipt(doneSale));
+$('#doneA4').addEventListener('click', () => { if (doneSale) { $('#doneDlg').close(); printSaleA4(doneSale); } });
+$('#autoPrint').addEventListener('change', (e) => localStorage.setItem('fc_autoprint', e.target.checked ? '1' : '0'));
+$('#doneNew').addEventListener('click', () => { $('#doneDlg').close(); $('#scan').focus(); });
+
+/* ---------- B2B A4 invoice ---------- */
+function printSaleA4(s) {
+  const c = ctx.company, sh = ctx.shop, rc = s.rc, isRet = rc.total < 0;
+  const rows = rc.lines.map((l) => `<tr><td>${esc(l.name)}${l.name_ar ? '<div class="muted">' + esc(l.name_ar) + '</div>' : ''}</td>
+    <td class="r">${l.qty}</td><td class="r">${f2(l.unit_price)}</td><td class="r">${f2(Math.abs(l.discount || 0))}</td>
+    <td class="r">${f2(l.vat_rate)}%</td><td class="r">${f2(l.total)}</td></tr>`).join('');
+  printA4(`<div class="a4">
+    <div class="head">
+      <div>${logoImg(c.logo, 'max-height:60px;max-width:160px')}<h1>${esc(c.name)}</h1>${c.name_ar ? `<div class="muted">${esc(c.name_ar)}</div>` : ''}
+        <div class="muted">${esc(c.address || '')}${c.phone ? ' · ' + esc(c.phone) : ''}</div><div><b>TRN: ${esc(c.trn || '-')}</b></div></div>
+      <div class="right">${logoImg(sh.logo, 'max-height:52px;max-width:120px;margin-left:auto')}
+        <h2>${isRet ? 'CREDIT NOTE' : 'TAX INVOICE'}</h2>
+        <div><b>No:</b> ${esc(s.invoice_no)}</div><div><b>Date:</b> ${esc(s.sold_at)}</div>
+        <div><b>Shop:</b> ${esc(sh.name)} (${esc(sh.code)})</div>${sh.group_code ? `<div><b>Branch group:</b> ${esc(sh.group_code)}</div>` : ''}
+        <div><b>Cashier:</b> ${esc(rc.cashier)}</div>${rc.authorised_name ? `<div><b>Approved by:</b> ${esc(rc.authorised_name)} (${esc(rc.authorised_by || '')})</div>` : ''}</div>
+    </div>
+    <div style="margin-top:12px"><b>Bill to</b><div>${s.customer_name ? esc(s.customer_name) : 'Walk-in customer'}</div>${s.customer_trn ? `<div>TRN: ${esc(s.customer_trn)}</div>` : ''}</div>
+    <table><thead><tr><th>Description</th><th class="r">Qty</th><th class="r">Unit price</th><th class="r">Discount</th><th class="r">VAT</th><th class="r">Line total (incl. VAT)</th></tr></thead><tbody>${rows}</tbody></table>
+    <div class="totals">
+      <div><span>Amount excl. VAT</span><span>${f2(rc.net)}</span></div>
+      ${vatSummary(rc.lines).map((v) => `<div><span>VAT ${v.rate}% on ${f2(v.net)}</span><span>${f2(v.vat)}</span></div>`).join('')}
+      <div class="big"><span>Total ${esc(CUR())}</span><span>${f2(rc.total)}</span></div>
+      ${s.payments.map((p) => `<div><span>Paid by ${esc(p.method)}</span><span>${f2(p.amount)}</span></div>`).join('')}
+      ${rc.change > 0 ? `<div><span>Change</span><span>${f2(rc.change)}</span></div>` : ''}
+    </div>
+    <div class="foot">${(() => { const q = qrFor(s); return q ? `<div class="qrbox">${q.svg}${esc(q.cap)}</div>` : ''; })()}<b>${esc(thanksText())}</b>${ctx.settings.receipt_note ? '<br>' + esc(ctx.settings.receipt_note) : ''}<br>Powered by Adnys</div>
+  </div>`);
+}
+
+/* ---------- sales list ---------- */
+$('#btnSales').addEventListener('click', async () => {
+  const all = (await allOf('sales')).sort((a, b) => b.saved_at - a.saved_at).slice(0, 40);
+  $('#salesList').innerHTML = all.length ? `<table>${all.map((s) => `<tr><td>${esc(s.invoice_no)}<div style="font-size:12px;color:var(--mute)">${esc(s.sold_at)}</div>
+    ${s.rc && s.rc.authorised_name ? `<div style="font-size:11px;color:var(--warn)">Approved: ${esc(s.rc.authorised_name)}</div>` : ''}</td>
+    <td class="r">${f2(s.rc.total)}</td><td><span class="pill ${s.status}">${s.status}</span>${s.error ? `<div style="font-size:11px;color:var(--bad)">${esc(s.error)}</div>` : ''}</td>
+    <td><div class="rowact"><button class="sec ibtn" data-rp="${esc(s.uuid)}" title="Print receipt">${ic('print')}</button><button class="sec ibtn" data-a4="${esc(s.uuid)}" title="A4 invoice">${ic('pdf')}</button><button class="btnwa ibtn" data-wa="${esc(s.uuid)}" title="Send on WhatsApp">${ic('whatsapp')}</button><button class="sec ibtn" data-sh="${esc(s.uuid)}" title="Share">${ic('share')}</button></div></td></tr>`).join('')}</table>` : '<p>No sales yet.</p>';
+  $('#salesDlg').showModal();
+});
+$('#salesList').addEventListener('click', async (e) => {
+  const rp = e.target.closest('[data-rp]'), a4 = e.target.closest('[data-a4]'), wa = e.target.closest('[data-wa]'), sh = e.target.closest('[data-sh]');
+  const hit = rp || a4 || wa || sh;
+  if (!hit) return;
+  const id = hit.dataset.rp || hit.dataset.a4 || hit.dataset.wa || hit.dataset.sh;
+  const s = (await allOf('sales')).find((x) => x.uuid === id);
+  if (!s) return;
+  if (wa) { sendWhatsApp(s); return; }
+  if (sh) { shareBill(s); return; }
+  $('#salesDlg').close();
+  if (rp) printReceipt(s); else printSaleA4(s);
+});
+$('#salesClose').addEventListener('click', () => $('#salesDlg').close());
+
+/* ---------- sync ---------- */
+async function updateBadge() {
+  const sales = await allOf('sales');
+  const pending = sales.filter((s) => s.status === 'pending').length, errors = sales.filter((s) => s.status === 'error').length;
+  const b = $('#badge');
+  let text = navigator.onLine ? 'Online' : 'Offline';
+  if (pending) text += ` · ${pending} to sync`;
+  if (errors) text += ` · ${errors} failed`;
+  if (sessionExpired) text = 'Sign in again to sync · ' + pending + ' waiting';
+  b.textContent = text;
+  b.className = errors || sessionExpired ? 'err' : (!navigator.onLine ? 'off' : '');
+}
+async function syncNow() {
+  if (syncing || !navigator.onLine || !cfg || sessionExpired) return updateBadge();
+  syncing = true;
+  try {
+    for (;;) {
+      const pending = (await allOf('sales')).filter((s) => s.status === 'pending').sort((a, b) => a.seq - b.seq).slice(0, 25);
+      if (!pending.length) break;
+      const payload = pending.map((s) => ({
+        uuid: s.uuid, invoice_no: s.invoice_no, seq: s.seq, register_id: s.register_id, sold_at: s.sold_at,
+        lines: s.lines, payments: s.payments, customer_name: s.customer_name, customer_trn: s.customer_trn, customer_phone: s.customer_phone || null, offers_ok: !!s.offers_ok,
+        auth_token: s.auth_token || null, auth_offline: !!s.auth_offline, authorised_by: s.authorised_by || null,
+      }));
+      const r = await api('sync_sales', { sales: payload });
+      for (const x of r.results) {
+        const s = pending.find((p) => p.uuid === x.uuid); if (!s) continue;
+        if (x.status === 'ok' || x.status === 'duplicate') { s.status = 'synced'; s.error = null; }
+        else if (x.error === 'return_needs_authorisation' && s.auth_token && s.authorised_by) {
+          // The one-time token expired while offline. The manager was already verified on this
+          // device, so retry with the cached offline approval the backend also accepts.
+          s.auth_token = null; s.auth_offline = true; s.status = 'pending'; s.error = null;
+        } else { s.status = 'error'; s.error = x.error || 'rejected'; }
+        await putSale(s);
+      }
+    }
+  } catch (e) {
+    if (e.code === 401) { sessionExpired = true; showReloginHint(); }
+  } finally { syncing = false; updateBadge(); }
+}
+function showReloginHint() { /* sales stay safe on this device; the badge tells the cashier to sign in again */ }
+addEventListener('online', () => { updateBadge(); syncNow(); });
+addEventListener('offline', updateBadge);
+setInterval(syncNow, 20000);
+setInterval(updateBadge, 5000);
+setInterval(() => { if (navigator.onLine && cfg && !sessionExpired && !cart.length) refreshItems(true); }, 15 * 60000);
+
+// Items and prices also refresh when the POS comes back on screen (at most every 2 minutes), so changes made in the Back office show up.
+let lastItemsAt = Date.now();
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && navigator.onLine && cfg && cfg.regId && !sessionExpired && !cart.length && Date.now() - lastItemsAt > 120000) refreshItems(true); });
+async function refreshItems(silent) {
+  lastItemsAt = Date.now();
+  try { await loadMaster(cfg.regId); ITEMS = await allOf('items'); indexItems(); renderResults($('#scan').value); $('#curLbl').textContent = CUR(); if (!silent) alert('Items and prices updated.'); }
+  catch (e) { if (e.code === 401) { sessionExpired = true; updateBadge(); } else if (!silent) alert('Could not refresh: ' + e.message); }
+}
+$('#btnRefresh').addEventListener('click', () => refreshItems(false));
+$('#badge').addEventListener('click', () => { if (sessionExpired) { showLogin(); } });
+$('#btnOut').addEventListener('click', async () => {
+  const left = (await allOf('sales')).filter((s) => s.status === 'pending').length;
+  if (left && !confirm(`${left} sale(s) are not synced yet. They stay on this device and sync when you sign in again. Sign out?`)) return;
+  try { if (navigator.onLine) await api('logout', {}); } catch (e) { /* ignore */ }
+  cfg.token = ''; localStorage.setItem('fc_cfg', JSON.stringify(cfg)); location.reload();
+});
+
+/* ---------- daily cash-up ---------- */
+let dayData = null;
+$('#btnDay').addEventListener('click', openDayClose);
+$('#dayClose').addEventListener('click', () => $('#dayDlg').close());
+async function openDayClose() {
+  if (!navigator.onLine) { alert('Connect to the internet to run the cash-up. Sales stay safe on this device.'); return; }
+  $('#dayMsg').textContent = '';
+  $('#dayDlg').showModal();
+  await loadDay(todayDubai());
+}
+async function loadDay(date) {
+  $('#dayBody').innerHTML = '<div style="padding:14px;color:var(--mute)">Loading…</div>';
+  try {
+    const d = await api('day_summary', null, { register_id: cfg.regId, date });
+    renderDay(d);
+  } catch (e) {
+    $('#dayBody').innerHTML = `<div class="err">${esc(e.code === 401 ? 'Please sign in again.' : e.message)}</div>`;
+  }
+}
+function renderDay(d) {
+  dayData = d;
+  const s = d.summary, cur = (d.settings && d.settings.currency) || CUR();
+  $('#dayBody').innerHTML = `
+    <div class="row" style="align-items:end">
+      <div><label>Date</label><input id="dcDate" type="date" value="${d.date}"></div>
+      <div><label>Register</label><input value="${esc(d.register.code)} · ${esc(d.shop.name)}" disabled></div>
+    </div>
+    <div class="kpis">
+      <div><span>Sales (VAT incl.)</span><b>${cur} ${f2(s.net_sales)}</b></div>
+      <div><span>Bills</span><b>${s.txn_count}</b></div>
+      <div><span>Returns</span><b>${cur} ${f2(s.returns_total)}</b></div>
+      <div><span>Cash sales</span><b>${cur} ${f2(s.cash_sales)}</b></div>
+      <div><span>Card sales</span><b>${cur} ${f2(s.card_sales)}</b></div>
+      <div><span>Bank / other</span><b>${cur} ${f2(s.bank_sales + s.other_sales)}</b></div>
+      <div><span>VAT</span><b>${cur} ${f2(s.vat_total)}</b></div>
+      <div><span>Profit</span><b>${cur} ${f2(s.profit)}</b></div>
+      <div><span>Cash-ups today</span><b>${s.closed_at ? 'Saved' : 'Open'}</b></div>
+    </div>
+    <div class="split2">
+      <div><label>Opening float</label><input id="dcOpen" type="number" step="0.01" value="${f2(s.opening_float)}"></div>
+      <div><label>Cash counted</label><input id="dcCount" type="number" step="0.01" value="${s.counted_cash != null ? f2(s.counted_cash) : f2(s.expected_cash)}"></div>
+    </div>
+    <div class="calc"><span>Expected cash <b id="dcExp"></b></span><span>Difference <b id="dcDiff"></b></span></div>
+    <label>Notes</label><input id="dcNotes" maxlength="500" value="${esc(s.notes || '')}">
+    ${s.closed_at ? `<div class="hint">Last saved ${esc(s.closed_at)}${s.closed_by ? ' by user #' + esc(s.closed_by) : ''}.</div>` : ''}`;
+  updateDayCalc();
+  $('#dcOpen').addEventListener('input', updateDayCalc);
+  $('#dcCount').addEventListener('input', updateDayCalc);
+  $('#dcDate').addEventListener('change', () => loadDay($('#dcDate').value));
+}
+function updateDayCalc() {
+  if (!dayData) return;
+  const s = dayData.summary, cur = (dayData.settings && dayData.settings.currency) || CUR();
+  const open = parseFloat($('#dcOpen').value) || 0, count = parseFloat($('#dcCount').value) || 0;
+  const exp = r2(open + s.cash_sales), diff = r2(count - exp);
+  $('#dcExp').textContent = cur + ' ' + f2(exp);
+  const el = $('#dcDiff'); el.textContent = cur + ' ' + f2(diff); el.className = Math.abs(diff) < 0.005 ? 'pos' : 'neg';
+}
+$('#dcSave').addEventListener('click', async () => {
+  if (!dayData) return;
+  const date = $('#dcDate').value;
+  $('#dayMsg').className = 'okmsg'; $('#dayMsg').textContent = 'Saving…';
+  try {
+    await api('close_day', { register_id: cfg.regId, close_date: date, opening_float: $('#dcOpen').value, counted_cash: $('#dcCount').value, notes: $('#dcNotes').value });
+    await loadDay(date);
+    $('#dayMsg').textContent = 'Cash-up saved for ' + date + '.';
+  } catch (e) {
+    $('#dayMsg').className = 'err'; $('#dayMsg').textContent = e.message;
+  }
+});
+
+function dayCsvRows(d, sales) {
+  const s = d.summary, cur = (d.settings && d.settings.currency) || CUR();
+  const rows = [
+    ['Flex-C daily closing', d.company.name, d.date],
+    ['Shop', d.shop.name, d.shop.code, 'Register', d.register.code],
+    ['Sales (VAT incl.)', s.net_sales], ['Bills', s.txn_count], ['Returns', s.returns_total],
+    ['VAT', s.vat_total], ['Net excl. VAT', s.net_ex_vat], ['Profit', s.profit],
+    ['Cash sales', s.cash_sales], ['Card sales', s.card_sales], ['Bank sales', s.bank_sales], ['Other sales', s.other_sales],
+    ['Opening float', s.opening_float], ['Expected cash', s.expected_cash], ['Counted cash', s.counted_cash], ['Difference', s.difference],
+    ['Currency', cur], [],
+    ['Invoice', 'Date/time', 'Type', 'Customer', 'Cashier', 'Authorised', 'Gross', 'Discount', 'Total', 'VAT', 'Net', 'Payments'],
+  ];
+  for (const x of sales) {
+    rows.push([x.invoice_no, x.sold_at, x.type, x.customer_name || '', x.cashier || '',
+      x.authorised_name ? x.authorised_name + (x.authorised_username ? ' (' + x.authorised_username + ')' : '') : '',
+      x.gross, x.discount, x.total, x.vat_total, x.net_total,
+      (x.payments || []).map((p) => p.method + ' ' + f2(p.amount)).join(' / ')]);
+  }
+  return rows;
+}
+function csvText(rows) {
+  return '\ufeff' + rows.map((r) => r.map((c) => {
+    const s = String(c ?? '');
+    return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  }).join(',')).join('\r\n');
+}
+function downloadCsv(name, text) {
+  const blob = new Blob([text], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1500);
+}
+async function daySales(date) {
+  return (await api('day_sales', null, { register_id: cfg.regId, date })).sales || [];
+}
+$('#dcCsv').addEventListener('click', async () => {
+  if (!dayData) return;
+  try {
+    const sales = await daySales(dayData.date);
+    downloadCsv(`closing-${dayData.date}.csv`, csvText(dayCsvRows(dayData, sales)));
+  } catch (e) { $('#dayMsg').className = 'err'; $('#dayMsg').textContent = e.message; }
+});
+$('#dcPdf').addEventListener('click', async () => {
+  if (!dayData) return;
+  try { await printDayReport(dayData); } catch (e) { $('#dayMsg').className = 'err'; $('#dayMsg').textContent = e.message; }
+});
+async function printDayReport(d) {
+  const sales = await daySales(d.date);
+  const s = d.summary, c = d.company, sh = d.shop, cur = (d.settings && d.settings.currency) || CUR();
+  const rows = sales.map((x) => `<tr><td>${esc(x.invoice_no)}</td><td>${esc(x.sold_at.slice(11, 16))}</td><td>${esc(x.type)}</td>
+    <td>${esc(x.customer_name || '')}${x.authorised_name ? '<div class="muted">Approved: ' + esc(x.authorised_name) + '</div>' : ''}</td>
+    <td class="r">${f2(x.total)}</td><td class="r">${f2(x.vat_total)}</td><td class="r">${(x.payments || []).map((p) => esc(p.method) + ' ' + f2(p.amount)).join('<br>')}</td></tr>`).join('');
+  printA4(`<div class="a4">
+    <div class="head">
+      <div>${logoImg(c.logo, 'max-height:60px;max-width:160px')}<h1>${esc(c.name)}</h1>${c.name_ar ? `<div class="muted">${esc(c.name_ar)}</div>` : ''}
+        <div class="muted">${esc(c.address || '')}${c.phone ? ' · ' + esc(c.phone) : ''}</div><div><b>TRN: ${esc(c.trn || '-')}</b></div></div>
+      <div class="right">${logoImg(sh.logo, 'max-height:52px;max-width:120px;margin-left:auto')}<h2>DAILY SALES & CASH-UP</h2>
+        <div><b>Date:</b> ${esc(d.date)}</div><div><b>Shop:</b> ${esc(sh.name)} (${esc(sh.code)})</div><div><b>Register:</b> ${esc(d.register.code)}</div></div>
+    </div>
+    <table><tbody>
+      <tr><td>Sales (VAT incl.)</td><td class="r"><b>${cur} ${f2(s.net_sales)}</b></td><td>Bills</td><td class="r">${s.txn_count}</td></tr>
+      <tr><td>Returns</td><td class="r">${cur} ${f2(s.returns_total)}</td><td>VAT</td><td class="r">${cur} ${f2(s.vat_total)}</td></tr>
+      <tr><td>Cash sales</td><td class="r">${cur} ${f2(s.cash_sales)}</td><td>Card sales</td><td class="r">${cur} ${f2(s.card_sales)}</td></tr>
+      <tr><td>Bank / other</td><td class="r">${cur} ${f2(s.bank_sales + s.other_sales)}</td><td>Profit</td><td class="r">${cur} ${f2(s.profit)}</td></tr>
+      <tr><td>Opening float</td><td class="r">${cur} ${f2(s.opening_float)}</td><td>Expected cash</td><td class="r">${cur} ${f2(s.expected_cash)}</td></tr>
+      <tr><td>Counted cash</td><td class="r">${s.counted_cash != null ? cur + ' ' + f2(s.counted_cash) : '-'}</td><td>Difference</td><td class="r">${s.difference != null ? cur + ' ' + f2(s.difference) : '-'}</td></tr>
+    </tbody></table>
+    <table><thead><tr><th>Invoice</th><th>Time</th><th>Type</th><th>Customer / approval</th><th class="r">Total</th><th class="r">VAT</th><th class="r">Payment</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="7">No sales on this date.</td></tr>'}</tbody></table>
+    <div class="foot">${s.notes ? 'Notes: ' + esc(s.notes) + '<br>' : ''}Printed ${esc(nowDubai())} · Powered by Adnys</div>
+  </div>`);
+}
+function daySummaryText(d) {
+  const s = d.summary, cur = (d.settings && d.settings.currency) || CUR();
+  return `Flex-C daily closing ${d.date}\n${d.company.name} · ${d.shop.name} (${d.shop.code}) · ${d.register.code}\n` +
+    `Sales: ${cur} ${f2(s.net_sales)} (${s.txn_count} bills)\nReturns: ${cur} ${f2(s.returns_total)}\nVAT: ${cur} ${f2(s.vat_total)}\n` +
+    `Cash: ${cur} ${f2(s.cash_sales)} · Card: ${cur} ${f2(s.card_sales)} · Bank/other: ${cur} ${f2(s.bank_sales + s.other_sales)}\n` +
+    `Expected cash: ${cur} ${f2(s.expected_cash)}${s.counted_cash != null ? ` · Counted: ${cur} ${f2(s.counted_cash)} · Difference: ${cur} ${f2(s.difference)}` : ''}`;
+}
+$('#dcShare').addEventListener('click', async () => {
+  if (!dayData) return;
+  const text = daySummaryText(dayData), title = 'Daily closing ' + dayData.date;
+  try {
+    const sales = await daySales(dayData.date);
+    const file = new File([csvText(dayCsvRows(dayData, sales))], `closing-${dayData.date}.csv`, { type: 'text/csv' });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ title, text, files: [file] }); return; }
+    if (navigator.share) { await navigator.share({ title, text }); return; }
+    alert('This browser cannot open the share sheet. Use WhatsApp, Email or CSV instead.');
+  } catch (e) { if (e && e.name === 'AbortError') return; alert('Could not share: ' + e.message); }
+});
+$('#dcWa').addEventListener('click', () => {
+  if (!dayData) return;
+  const num = (dayData.settings && dayData.settings.share_whatsapp ? String(dayData.settings.share_whatsapp).replace(/[^0-9]/g, '') : '');
+  window.open('https://wa.me/' + num + '?text=' + encodeURIComponent(daySummaryText(dayData)), '_blank');
+});
+$('#dcMail').addEventListener('click', () => {
+  if (!dayData) return;
+  const to = (dayData.settings && dayData.settings.share_email) || '';
+  location.href = 'mailto:' + encodeURIComponent(to) + '?subject=' + encodeURIComponent('Daily closing ' + dayData.date) + '&body=' + encodeURIComponent(daySummaryText(dayData));
+});
+
+/* ---- version check: Console publishes releases; stale pages are told to reload ---- */
+async function checkVersion(getJson) {
+  try {
+    const v = await getJson();
+    if (!v || !v.latest) return;
+    const cmp = (a, b) => { const x = a.split('.').map(Number), y = b.split('.').map(Number); for (let i = 0; i < 3; i++) { if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) - (y[i] || 0); } return 0; };
+    const old = cmp(APP_VERSION, v.latest) < 0, forced = cmp(APP_VERSION, v.min_required || '0.0.0') < 0;
+    if (!old || document.getElementById('fc_upd')) return;
+    const bar = document.createElement('div'); bar.id = 'fc_upd';
+    bar.style.cssText = forced ? 'position:fixed;inset:0;z-index:99;background:#0f172af0;color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;text-align:center;padding:20px'
+      : 'position:fixed;left:0;right:0;bottom:0;z-index:99;background:#1e293b;color:#fff;padding:10px 16px;display:flex;gap:12px;align-items:center;justify-content:center;flex-wrap:wrap';
+    bar.innerHTML = `<span>${forced ? '<b>Update required.</b> ' : ''}Version ${v.latest} is available${v.notes ? ': ' + v.notes.replace(/[<>&]/g, '') : '.'} You are on ${APP_VERSION}.</span><button style="font:inherit;border:0;border-radius:8px;padding:7px 14px;background:#fff;cursor:pointer;font-weight:700">Update now</button>`;
+    bar.querySelector('button').onclick = async () => {
+      try { for (const r of await navigator.serviceWorker.getRegistrations()) await r.unregister(); for (const k of await caches.keys()) await caches.delete(k); } catch (e) { /* ignore */ }
+      location.reload();
+    };
+    document.body.appendChild(bar);
+  } catch (e) { /* offline or old server: skip */ }
+}
+function posVersionCheck() { if (cfg && cfg.token && navigator.onLine && !sessionExpired) checkVersion(() => api('version', null, { v: APP_VERSION })); }
+setInterval(posVersionCheck, 30 * 60000);
+
+function fcSafeReload() { return !cart.length && !document.querySelector('dialog[open]'); }
+
+/* ---------- boot ---------- */
+(async function boot() {
+  hydrateIcons();
+  cfg = JSON.parse(localStorage.getItem('fc_cfg') || 'null');
+  ctx = await mget('ctx');
+  if (cfg && cfg.token && ctx) { await startApp(); posVersionCheck(); return; }
+  if (cfg && ctx && !cfg.token) { sessionExpired = true; cfg = { token: '', user: cfg.user, regId: cfg.regId, settings: cfg.settings || {} }; }
+  showLogin();
+})();
+</script>
+<script src="../assets/pwa.js?v=6ee69c42eb" data-sw="sw.js" data-guard="fcSafeReload"></script>
+</body>
+</html>

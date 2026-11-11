@@ -1,0 +1,333 @@
+<!doctype html>
+<html lang="en" data-app="console">
+<head>
+<meta charset="utf-8">
+<script>try{var t=localStorage.getItem('fc_theme');if(t!=='dark'&&t!=='light')t=matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light';document.documentElement.dataset.theme=t}catch(e){}</script>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="../assets/icons/console-32.png" type="image/png">
+<link rel="apple-touch-icon" href="../assets/icons/console-apple.png">
+<meta name="theme-color" content="#0b1437">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Flex-C Console">
+<title>Flex-C Console</title>
+<link rel="stylesheet" href="../assets/app.css?v=498d606380">
+<style>
+header.top a.on{color:#fff}
+dialog{border:0;border-radius:14px;padding:20px;width:min(440px,94vw);box-shadow:0 10px 40px #0004}
+dialog::backdrop{background:#0006}
+.pw{font:700 18px ui-monospace,Consolas,monospace;background:#f1f5f9;padding:10px;border-radius:8px;word-break:break-all;margin:6px 0}
+</style>
+<style id="dark">
+@media screen{
+html[data-theme=dark] .pw{background:var(--soft0)}
+}
+</style>
+</head>
+<body>
+<header class="top">
+  <b>Flex-C Console</b><small>Adnys staff</small>
+  <a data-v="home" class="on" href="#home">Customers</a><a data-v="rel" href="#rel">Versions</a><a data-v="staff" href="#staff">Staff</a><a data-v="log" href="#log">Activity</a>
+  <span class="sp"></span><small id="who"></small><button id="out">Sign out</button>
+</header>
+<div class="wrap" id="main"></div>
+<footer class="pw"><b>Flex-C</b> · Your trade, a smart move<br>Powered by <a href="https://adnys.com" target="_blank" rel="noopener">Adnys</a> · adnys.com</footer>
+<dialog id="dlg"></dialog>
+<script>
+'use strict';
+const API = '../api/console.php';
+const $ = (s, r = document) => r.querySelector(s);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const S = { tok: sessionStorage.getItem('cs_tok') || '', me: JSON.parse(sessionStorage.getItem('cs_me') || 'null') };
+const isAdmin = () => S.me && S.me.role === 'admin';
+const ERR = { invalid_login: 'Wrong email or password.', too_many_attempts: 'Too many attempts. Wait 15 minutes.', forbidden: 'Admin only.', duplicate: 'That email, code or version already exists.',
+  bad_email: 'Enter a valid email.', bad_trn: 'TRN must be 15 digits.', bad_code: 'Code: 1-10 letters or digits.', bad_version: 'Version like 1.2.0.', missing_field: 'Fill the required fields.',
+  cashier_needs_shop: 'A cashier must be tied to a shop.', cannot_change_self: 'You cannot change your own account.',
+  update_key_not_set: 'Save your signing key first (one time).', bad_signature: 'Signature check failed. This package was not signed with your release key. Nothing was changed.',
+  not_newer: 'That version is not newer than the one installed.', needs_earlier_version: 'This package cannot upgrade from the installed version. Install the earlier release first.',
+  hash_mismatch: 'The package is damaged (a file does not match its signed checksum). Nothing was changed.', bad_package: 'That is not a Flex-C release package.', bad_manifest: 'The package manifest is invalid.',
+  not_a_zip: 'Choose the .zip made by make_release.php.', package_too_big: 'The package is too large.', bad_path: 'The package contains a file path that is not allowed.', unexpected_entry: 'The package contains unsigned files.',
+  missing_files: 'The package is incomplete.', version_file_mismatch: 'version.json does not match the package version.', no_file: 'Choose a package file first.',
+  file_too_big_for_server: 'The server upload limit is smaller than this file. Raise upload_max_filesize and post_max_size in hPanel > PHP Configuration.', upload_failed: 'The upload did not finish. Try again.',
+  update_in_progress: 'Another update is running. Wait a minute and try again.', not_writable: 'The server would not let the update write its files. Check folder permissions.',
+  backup_failed: 'Could not create the safety backup, so nothing was changed.', update_failed: 'The update failed and the previous files were restored.',
+  wrong_db_password: 'That is not the database password.', key_already_set: 'A signing key is already set.', bad_public_key: 'That is not a valid public key.',
+  no_sodium: 'PHP sodium extension is missing on this server.', no_zip: 'PHP zip extension is missing on this server.', only_latest_can_be_rolled_back: 'Only the most recent update can be rolled back.',
+  backup_missing: 'The backup file for that update is gone.', confirm_text_wrong: 'The confirmation words do not match.', wrong_password: 'Your password is wrong.', has_history: 'This customer already has bills. Tick "also remove sales, purchases and returns" or leave them as they are.', demo_exists: 'The demo company already exists.', no_release: 'No release is published yet.', updating: 'A new version is being installed. Try again in a minute.' };
+
+async function api(route, body, params) {
+  const u = new URL(API, location.href);
+  u.searchParams.set('r', route);
+  Object.entries(params || {}).forEach(([k, v]) => u.searchParams.set(k, v));
+  const res = await fetch(u, { method: body ? 'POST' : 'GET', headers: { 'Content-Type': 'application/json', 'X-Staff-Token': S.tok }, body: body ? JSON.stringify(body) : undefined });
+  let j = {}; try { j = await res.json(); } catch (e) { /* non-JSON */ }
+  if (res.status === 401 && route !== 'login') { sessionStorage.clear(); location.reload(); throw new Error('session_expired'); }
+  if (!res.ok) throw new Error(ERR[j.error] || j.error || 'http_' + res.status);
+  return j;
+}
+
+/* ---- dialogs ---- */
+const dlg = $('#dlg');
+function ask(title, fields, okText = 'Save') {
+  return new Promise((resolve) => {
+    dlg.innerHTML = `<form><h3 style="margin:0 0 8px">${esc(title)}</h3>` + fields.map((f) => {
+      const id = 'f_' + f.k, v = f.v ?? '';
+      const inp = f.opts ? `<select id="${id}">${f.opts.map(([val, lbl]) => `<option value="${esc(val)}" ${String(val) === String(v) ? 'selected' : ''}>${esc(lbl)}</option>`).join('')}</select>`
+        : f.type === 'check' ? `<input id="${id}" type="checkbox" style="width:auto" ${v ? 'checked' : ''}>`
+        : f.type === 'area' ? `<textarea id="${id}" rows="3">${esc(v)}</textarea>`
+        : `<input id="${id}" type="${f.type || 'text'}" value="${esc(v)}" ${f.req ? 'required' : ''} ${f.ph ? `placeholder="${esc(f.ph)}"` : ''}>`;
+      return `<label for="${id}">${esc(f.l)}${f.req ? ' *' : ''}</label>${inp}`;
+    }).join('') + `<div class="err" id="f_err"></div><div class="row" style="margin-top:10px"><button type="button" class="btn sec" id="f_no">Cancel</button><button class="btn">${okText}</button></div></form>`;
+    dlg.showModal();
+    $('#f_no').onclick = () => { dlg.close(); resolve(null); };
+    dlg.oncancel = () => resolve(null);
+    $('form', dlg).onsubmit = async (e) => {
+      e.preventDefault();
+      const o = {};
+      fields.forEach((f) => { const el = $('#f_' + f.k); o[f.k] = f.type === 'check' ? el.checked : el.value.trim(); });
+      resolve(o);
+    };
+  });
+}
+function failIn(msg) { const e = $('#f_err'); if (e) e.textContent = msg; }
+// Open a dialog; on API error keep it open with the message and the typed values.
+async function retry(title, fields, call, okText, msg) {
+  const p = ask(title, fields, okText); failIn(msg);
+  const o = await p; if (!o) return null;
+  try { const r = await call(o); dlg.close(); return r; } catch (e) { return retry(title, fields.map((f) => ({ ...f, v: o[f.k] })), call, okText, e.message); }
+}
+function showPass(title, r) {
+  const user = r.username || r.login || '';
+  dlg.innerHTML = `<h3 style="margin:0 0 8px">${esc(title)}</h3>${user ? `<div>Username</div><div class="pw">${esc(user)}</div>` : ''}${r.email ? `<div>Email</div><div class="pw">${esc(r.email)}</div>` : ''}${r.shop_code ? `<div>Shop code</div><div class="pw">${esc(r.shop_code)}</div>` : ''}<div>Password (shown once)</div><div class="pw">${esc(r.password)}</div>
+    <p style="color:var(--mute);font-size:13px;margin:6px 0 0">The user signs in with this username (or their email if one was set) and the password.</p>
+    <div class="row" style="margin-top:10px"><button class="btn sec" id="cp">Copy</button><button class="btn" id="ok">Done</button></div>`;
+  dlg.showModal();
+  $('#cp').onclick = () => {
+    const text = [user ? 'Username: ' + user : '', r.email ? 'Email: ' + r.email : '', r.shop_code ? 'Shop code: ' + r.shop_code : '', 'Password: ' + r.password].filter(Boolean).join('\n');
+    if (navigator.clipboard) navigator.clipboard.writeText(text);
+  };
+  $('#ok').onclick = () => dlg.close();
+}
+
+/* ---- login ---- */
+function login() {
+  const o = document.createElement('div'); o.className = 'overlay';
+  o.innerHTML = `<form class="box"><h1>Flex-C Console</h1><div class="by">Adnys staff only · Your trade, a smart move</div>
+    <label>Email</label><input id="lg_em" type="email" autocomplete="username" required>
+    <label>Password</label><input id="lg_pw" type="password" autocomplete="current-password" required>
+    <div class="err" id="lg_err"></div><button class="btn" style="width:100%;margin-top:8px">Sign in</button></form>`;
+  document.body.appendChild(o);
+  $('form', o).onsubmit = async (e) => {
+    e.preventDefault();
+    try {
+      const r = await api('login', { email: $('#lg_em').value, password: $('#lg_pw').value });
+      S.tok = r.token; S.me = r.staff; sessionStorage.setItem('cs_tok', r.token); sessionStorage.setItem('cs_me', JSON.stringify(r.staff));
+      o.remove(); start();
+    } catch (err) { $('#lg_err').textContent = err.message; }
+  };
+}
+
+/* ---- views ---- */
+const tagV = (v, bad) => v ? `<span class="tag ${bad ? 'warn' : 'ok'}">v${esc(v)}</span>` : '<span class="tag">never</span>';
+const seen = (t) => t ? esc(t.slice(0, 16)) : '-';
+const TRADES = [['other', 'Other'], ['clothes', 'Clothes'], ['mobile', 'Mobile'], ['grocery', 'Grocery'], ['stationery', 'Stationery']];
+const companyFields = (c = {}, withShop = false) => [
+  { k: 'name', l: 'Legal name', req: 1, v: c.name }, { k: 'name_ar', l: 'Arabic name', v: c.name_ar }, { k: 'trn', l: 'TRN (15 digits)', v: c.trn },
+  { k: 'address', l: 'Address', v: c.address }, { k: 'phone', l: 'Phone', v: c.phone }, { k: 'footer', l: 'Receipt footer', v: c.footer, ph: 'Thank you / شكراً لزيارتكم' },
+  ...(withShop ? [{ k: 'shop_code', l: 'First shop code (leave empty to generate from the shop name)', ph: 'e.g. MAIN001' }, { k: 'shop_name', l: 'First shop name', v: 'Main Shop' }, { k: 'trade', l: 'Trade', opts: TRADES }] : []),
+];
+const main = $('#main');
+let TID = null;
+
+async function viewHome() {
+  const d = await api('overview');
+  const l = d.latest ? d.latest.version : '-';
+  main.innerHTML = `<div class="grid g3" style="margin-bottom:14px">
+    <div class="kpi"><div class="l">Customers</div><div class="v">${d.tenants.length}</div><div class="s">${d.tenants.filter((t) => +t.active).length} active</div></div>
+    <div class="kpi"><div class="l">Latest release</div><div class="v">v${esc(l)}</div><div class="s">minimum required v${esc(d.min_required)}</div></div>
+    <div class="kpi"><div class="l">Customers behind</div><div class="v ${d.outdated ? 'warn' : ''}">${d.outdated}</div><div class="s">last seen on an older version</div></div></div>
+    <div class="card"><div class="row" style="margin-bottom:8px"><h2 style="margin:0">Customers</h2><div class="fit"><button class="btn sec" id="nc">+ New company</button> <button class="btn" id="nt">+ New customer</button></div></div>
+    <div class="tbl"><table><tr><th>Customer</th><th>Plan</th><th class="r">Companies</th><th class="r">Shops</th><th class="r">Users</th><th>Version</th><th>Updates</th><th>Last seen</th><th>Status</th></tr>
+    ${d.tenants.map((t) => `<tr><td><a href="#t${t.id}">${esc(t.name)}</a><div style="font-size:12px;color:var(--mute)">${esc(t.contact_email || '')}</div></td><td>${esc(t.plan)}</td>
+      <td class="r">${t.companies}</td><td class="r">${t.shops}</td><td class="r">${t.users}</td><td>${tagV(t.last_version, t.outdated)}</td><td>${+t.is_demo ? '<span class="tag ok">auto (demo)</span>' : t.update_mode === 'auto' ? '<span class="tag ok">auto</span>' : '<span class="tag">push</span> ' + (t.waiting ? '<span class="tag warn">v' + esc(d.latest.version) + ' waiting</span>' : '')}</td><td>${seen(t.last_seen_at)}</td>
+      <td>${+t.active ? '<span class="tag ok">active</span>' : '<span class="tag bad">suspended</span>'}</td></tr>`).join('') || '<tr><td colspan="9">No customers yet.</td></tr>'}</table></div></div>
+    ${isAdmin() ? `<div class="card"><h3 style="margin:0 0 6px">Fresh start (admin)</h3><div style="color:var(--mute);font-size:14px;margin-bottom:8px">Companies, shops, users and settings are kept. Only items and stock are removed so each shop can load its real stock once from Excel (Back office &gt; Import stock).</div><div class="row"><div class="fit"><button class="btn sec" id="cs_all">Clear items and stock: all customers</button></div>${d.tenants.some((t) => +t.is_demo) ? '' : '<div class="fit"><button class="btn" id="demo_new">Create ABC demo company</button></div>'}</div></div>` : ''}`;
+  $('#nt').onclick = newTenant;
+  if ($('#cs_all')) $('#cs_all').onclick = () => clearStock({ all: true }, 'ALL customers');
+  if ($('#demo_new')) $('#demo_new').onclick = async () => { if (!confirm('Create the ABC demo company with sample items and stock?')) return; try { const r = await api('demo_create', {}); showDemo(r); viewHome(); } catch (e) { alert(e.message); } };
+  $('#nc').onclick = async () => {
+    if (!d.tenants.length) { alert('Create a customer first.'); return; }
+    const r = await retry('New company', [{ k: 'tenant_id', l: 'Customer', opts: d.tenants.map((t) => [t.id, t.name]) }, ...companyFields({}, true)], (o) => api('company_save', o), 'Create company', '');
+    if (r) location.hash = '#t' + r.tenant_id;
+  };
+}
+
+async function clearStock(target, label) {
+  const r = await retry('Clear items and stock: ' + label, [
+    { k: 'include_history', l: 'Also remove sales, purchases, supplier payments, returns and cash-ups (needed if the customer already has bills)', type: 'check' },
+    { k: 'include_masters', l: 'Also remove suppliers, expenses and customers (only company, shops, users and settings stay; needs the tick above)', type: 'check' },
+    { k: 'confirm', l: 'Type CLEAR ITEMS AND STOCK to confirm', req: 1 }, { k: 'password', l: 'Your Console password', type: 'password', req: 1 },
+  ], (o) => api('clear_stock', { ...target, include_history: o.include_history, include_masters: o.include_masters, confirm: o.confirm, password: o.password }), 'Clear', 'Company, shops, users and settings are always kept. Stock takes are removed with the items. Take a backup first (Back office > Backup and export, and hPanel > Backups). This cannot be undone.');
+  if (r) { alert('Done. ' + r.cleared.reduce((a, c) => a + c.items, 0) + ' item(s) and ' + r.cleared.reduce((a, c) => a + c.stock_rows, 0) + ' stock record(s) removed.'); route(); }
+}
+function showDemo(r) {
+  dlg.innerHTML = `<h3 style="margin:0 0 8px">ABC demo company created</h3><div style="font-size:14px;margin-bottom:6px">Shops ${esc(r.shops.join(', '))}. Passwords are shown once.</div>` +
+    r.logins.map((l) => `<div><b>${esc(l.role)}</b></div><div class="pw">${esc(l.username)} &nbsp; ${esc(l.password)}</div>`).join('') + `<div class="row" style="margin-top:10px"><button class="btn" id="ok">Done</button></div>`;
+  dlg.showModal(); $('#ok').onclick = () => dlg.close();
+}
+
+async function newTenant() {
+  const r = await retry('New customer', [
+    { k: 'name', l: 'Customer name', req: 1 }, { k: 'company_name', l: 'First company (legal name)', ph: 'same as customer if empty' }, { k: 'company_name_ar', l: 'Company name (Arabic)' },
+    { k: 'trn', l: 'TRN (15 digits)' }, { k: 'owner_name', l: 'Owner name', req: 1 }, { k: 'owner_email', l: 'Owner email (optional — they sign in with a username)', type: 'email' }, { k: 'contact_phone', l: 'Phone' },
+    { k: 'shop_code', l: 'First shop code (leave empty to generate from the shop name)', ph: 'e.g. MAIN001' }, { k: 'shop_name', l: 'First shop name', v: 'Main Shop' },
+    { k: 'trade', l: 'Trade', v: 'other', opts: [['other', 'Other'], ['clothes', 'Clothes'], ['mobile', 'Mobile'], ['grocery', 'Grocery'], ['stationery', 'Stationery']] },
+    { k: 'plan', l: 'Plan', v: 'standard', opts: [['standard', 'Standard'], ['pro', 'Pro'], ['trial', 'Trial']] }, { k: 'notes', l: 'Notes', type: 'area' },
+  ], (o) => api('tenant_create', o), 'Create customer', '');
+  if (r) { showPass('Customer created. Give these to the owner.', r); location.hash = '#t' + r.tenant_id; }
+}
+
+async function viewTenant(id) {
+  const d = await api('tenant_get', null, { id });
+  const t = d.tenant, co = Object.fromEntries(d.companies.map((c) => [c.id, c.name])), sh = Object.fromEntries(d.shops.map((s) => [s.id, s]));
+  main.innerHTML = `<div class="row" style="margin-bottom:10px"><div><a href="#home">&larr; Customers</a><h2 style="margin:4px 0">${esc(t.name)} ${+t.active ? '' : '<span class="tag bad">suspended</span>'}</h2>
+      <small style="color:var(--mute)">${esc(t.plan)} · ${esc(t.contact_name || '')} ${esc(t.contact_email || '')} ${esc(t.contact_phone || '')} · version ${esc(t.last_version || 'never seen')}</small></div>
+      <div class="fit"><button class="btn sec" id="te">Edit</button> ${isAdmin() ? `<button class="btn sec" id="tc">Clear items and stock</button> <button class="btn ${+t.active ? 'sec' : ''}" id="ts">${+t.active ? 'Suspend' : 'Reactivate'}</button>` : ''}</div></div>
+    <div class="card"><div class="row"><h3 style="margin:0">Companies</h3><div class="fit"><button class="btn sec" id="ac">+ Company</button></div></div>
+      <table><tr><th>Name</th><th>TRN</th><th>Phone</th><th></th></tr>${d.companies.map((c) => `<tr><td>${esc(c.name)}<div style="font-size:12px;color:var(--mute)">${esc(c.name_ar || '')}</div></td><td>${esc(c.trn || '-')}</td><td>${esc(c.phone || '-')}</td><td class="r"><button class="btn sec" data-ec="${c.id}">Edit</button></td></tr>`).join('')}</table></div>
+    <div class="card"><div class="row"><h3 style="margin:0">Shops and registers</h3><div class="fit">${isAdmin() ? '<button class="btn sec" id="as">+ Shop</button>' : '<span class="tag warn">Only an Adnys admin adds shops</span>'}</div></div>
+      <table><tr><th>Code</th><th>Group</th><th>Shop</th><th>Company</th><th>Trade</th><th>Registers</th><th></th></tr>${d.shops.map((s) => `<tr><td>${esc(s.code)}</td><td>${esc(s.group_code || '-')}</td><td>${esc(s.name)}</td><td>${esc(co[s.company_id])}</td><td>${esc(s.trade)}</td>
+        <td>${d.registers.filter((r) => r.shop_id == s.id).map((r) => `<span class="tag">${esc(r.code)}</span>`).join(' ')}</td><td class="r"><button class="btn sec" data-ar="${s.id}">+ Register</button></td></tr>`).join('') || '<tr><td colspan="7">No shops.</td></tr>'}</table></div>
+    <div class="card"><div class="row"><h3 style="margin:0">Users</h3><div class="fit"><button class="btn sec" id="au">+ User</button></div></div>
+      <table><tr><th>Name</th><th>Username</th><th>Email</th><th>Role</th><th>Shop</th><th></th></tr>${d.users.map((u) => `<tr><td>${esc(u.name)} ${+u.active ? '' : '<span class="tag bad">disabled</span>'}</td><td>${esc(u.username || '-')}</td><td>${esc(u.email || '-')}</td><td>${esc(u.role)}</td><td>${u.shop_id ? esc(sh[u.shop_id]?.code) : 'all'}</td>
+        <td class="r"><button class="btn sec" data-rp="${u.id}">Reset password</button> <button class="btn sec" data-ut="${u.id}" data-on="${+u.active}">${+u.active ? 'Disable' : 'Enable'}</button></td></tr>`).join('')}</table></div>`;
+  const reload = () => viewTenant(id);
+  const coF = (c = {}, withShop = false) => companyFields(c, withShop);
+  $('#te').onclick = async () => { if (await retry('Edit customer', [{ k: 'name', l: 'Name', req: 1, v: t.name }, { k: 'plan', l: 'Plan', v: t.plan, opts: [['standard', 'Standard'], ['pro', 'Pro'], ['trial', 'Trial']] }, { k: 'contact_name', l: 'Contact', v: t.contact_name }, { k: 'contact_email', l: 'Contact email', v: t.contact_email }, { k: 'contact_phone', l: 'Phone', v: t.contact_phone }, { k: 'notes', l: 'Notes', type: 'area', v: t.notes }], (o) => api('tenant_update', { id, ...o }), 'Save', '')) reload(); };
+  if ($('#tc')) $('#tc').onclick = () => clearStock({ tenant_id: id }, t.name);
+  if ($('#ts')) $('#ts').onclick = async () => { if (confirm(+t.active ? 'Suspend this customer? Nobody there can sign in until you reactivate.' : 'Reactivate this customer?')) { try { await api('tenant_update', { id, active: +t.active ? 0 : 1 }); reload(); } catch (e) { alert(e.message); } } };
+  $('#ac').onclick = async () => { if (await retry('New company', coF({}, true), (o) => api('company_save', { tenant_id: id, ...o }), 'Add', '')) reload(); };
+  main.querySelectorAll('[data-ec]').forEach((b) => b.onclick = async () => { const c = d.companies.find((x) => x.id == b.dataset.ec); if (await retry('Edit company', coF(c), (o) => api('company_save', { tenant_id: id, id: c.id, ...o }), 'Save', '')) reload(); });
+  if ($('#as')) $('#as').onclick = async () => { if (await retry('New shop (gets register R1)', [{ k: 'company_id', l: 'Company', opts: d.companies.map((c) => [c.id, c.name]) }, { k: 'code', l: 'Shop code (leave empty to generate from the shop name)', ph: 'e.g. DXB001' }, { k: 'name', l: 'Shop name', req: 1 }, { k: 'trade', l: 'Trade', opts: [['other', 'Other'], ['clothes', 'Clothes'], ['mobile', 'Mobile'], ['grocery', 'Grocery'], ['stationery', 'Stationery']] }, { k: 'address', l: 'Address' }], (o) => api('shop_save', { tenant_id: id, ...o }), 'Add', '')) reload(); };
+  main.querySelectorAll('[data-ar]').forEach((b) => b.onclick = async () => { if (await retry('New register', [{ k: 'code', l: 'Register code', req: 1, ph: 'R2' }], (o) => api('register_save', { tenant_id: id, shop_id: b.dataset.ar, ...o }), 'Add', '')) reload(); });
+  $('#au').onclick = async () => { const r = await retry('New user', [{ k: 'name', l: 'Name', req: 1 }, { k: 'email', l: 'Email (optional — a username is generated)', type: 'email' }, { k: 'role', l: 'Role', opts: [['cashier', 'Cashier'], ['manager', 'Manager'], ['accountant', 'Accountant'], ['purchase', 'Purchase team'], ['stocker', 'Stocker (stock take only)'], ['owner', 'Owner']] }, { k: 'shop_id', l: 'Locked to shop (required for cashier and stocker)', opts: [['', 'All shops'], ...d.shops.map((s) => [s.id, s.code + ' - ' + s.name])] }], (o) => api('user_save', { tenant_id: id, ...o }), 'Create', ''); if (r) { showPass('User created', r); reload(); } };
+  main.querySelectorAll('[data-rp]').forEach((b) => b.onclick = async () => { if (!confirm('Reset this password? They will be signed out.')) return; try { showPass('New password', await api('user_action', { user_id: b.dataset.rp, action: 'reset' })); } catch (e) { alert(e.message); } });
+  main.querySelectorAll('[data-ut]').forEach((b) => b.onclick = async () => { try { await api('user_action', { user_id: b.dataset.ut, action: +b.dataset.on ? 'disable' : 'enable' }); reload(); } catch (e) { alert(e.message); } });
+}
+
+function updateCard(u) {
+  if (!u || u.error) return `<div class="card err">${esc((u && u.error) || 'Could not read update status.')}</div>`;
+  const warn = [];
+  if (!u.has_sodium) warn.push('PHP sodium extension is missing (hPanel > PHP Configuration > Extensions).');
+  if (!u.has_zip) warn.push('PHP zip extension is missing.');
+  if (!u.writable) warn.push('Server folders are not writable, so an update could not replace files.');
+  const mb = u.upload_limit ? Math.floor(u.upload_limit / 1048576) + ' MB' : 'unknown';
+  const key = u.key_set ? `<span class="tag ok">set · ${esc(u.key_fingerprint)}</span>` : '<span class="tag bad">not set</span>';
+  const keyForm = `<div style="background:#fffbeb;border-radius:10px;padding:12px;margin-top:8px"><b>One-time setup: your release signing key</b>
+    <p style="margin:6px 0;color:var(--mute);font-size:13px">On your own computer run <code>php tools/make_release.php keygen</code>. It prints a <b>public key</b> and saves a private key file that never leaves you. Paste only the public key here. After this, the server installs only packages signed by you, even if someone steals a Console login.</p>
+    <label>Public key</label><input id="uk_pub" placeholder="base64 text from keygen">
+    <label>Database password (proof that you control this server)</label><input id="uk_db" type="password" autocomplete="off">
+    <div class="err" id="uk_err"></div><button class="btn" id="uk_save">Save signing key</button></div>`;
+  const upForm = `<div class="row" style="margin-top:8px"><div style="flex:2"><label>Release package (.zip)</label><input id="up_file" type="file" accept=".zip"></div>
+      <div style="flex:3"><label>What changed (shown to customers)</label><input id="up_notes" placeholder="optional, taken from the package if empty"></div>
+      <div class="fit"><label><input id="up_force" type="checkbox" style="width:auto"> Force update</label></div>
+      <div class="fit"><button class="btn" id="up_go">Upload and install</button></div></div>
+    <div class="err" id="up_err"></div><div id="up_ok" class="okmsg"></div>
+    <p style="color:var(--mute);font-size:13px;margin:6px 0 0">The server checks the signature and every file checksum, makes a backup, installs, then runs database updates. If anything fails it restores the old files. Registers keep selling and sync afterwards. <b>Force</b> blocks pages on older versions until they reload.</p>`;
+  const hist = u.history.length ? `<h3 style="margin:16px 0 6px">Update history</h3><div class="tbl"><table><tr><th>When</th><th>Version</th><th>Result</th><th>By</th><th class="r">Files</th><th>Notes</th><th></th></tr>
+    ${u.history.map((h) => `<tr><td>${esc(h.created_at.slice(0, 16))}</td><td>v${esc(h.from_version)} &rarr; v${esc(h.to_version)}</td>
+      <td><span class="tag ${h.status === 'applied' ? 'ok' : h.status === 'failed' ? 'bad' : 'warn'}">${esc(h.status.replace('_', ' '))}</span></td><td>${esc(h.staff || '')}</td><td class="r">${h.files_changed}</td>
+      <td style="max-width:280px">${esc(h.message || '')}${h.migrations ? `<div style="font-size:12px;color:var(--mute)">db: ${esc(h.migrations)}</div>` : ''}</td>
+      <td class="r">${+h.id === +u.rollback_id ? `<button class="btn sec" data-rb="${h.id}">Roll back</button>` : ''}</td></tr>`).join('')}</table></div>
+    <p style="color:var(--mute);font-size:12px;margin:6px 0 0">Roll back restores the previous files. Database updates are additive and stay in place.</p>` : '';
+  return `<div class="card"><h2>Upload next version</h2><p style="color:var(--mute);margin:0 0 6px">Installed <b>v${esc(u.version)}</b> · signing key ${key} · server upload limit ${mb}</p>
+    ${warn.map((w) => `<div class="tag warn" style="display:block;margin:4px 0;white-space:normal">${esc(w)}</div>`).join('')}${u.key_set ? upForm : keyForm}${hist}</div>`;
+}
+
+function rolloutCard(d, ov) {
+  return `<div class="card"><h3 style="margin:0 0 4px">Roll-out to customers</h3><div style="color:var(--mute);font-size:14px;margin-bottom:8px">New files go onto the server once. <b>Auto</b> customers (the ABC demo) are told about every release at once. <b>Push</b> customers only hear about a version after you push it to them here, so you can test on the demo first.</div>
+    <div class="tbl"><table><tr><th>Customer</th><th>Mode</th><th>Pushed</th><th>Seen on</th><th></th></tr>${ov.tenants.map((t) => `<tr><td>${esc(t.name)} ${+t.is_demo ? '<span class="tag ok">demo</span>' : ''}</td><td>${t.update_mode === 'auto' ? 'Auto' : 'Push'}</td><td>${t.update_mode === 'auto' ? 'always latest' : 'v' + esc(t.pushed_version || '-')}</td><td>${tagV(t.last_version, t.outdated)}</td>
+      <td class="r">${t.update_mode === 'push' ? `<button class="btn sec" data-push="${t.id}" ${t.waiting ? '' : 'disabled'}>Push v${esc(d.latest || '')}</button> ` : ''}<button class="btn sec" data-mode="${t.id}" data-to="${t.update_mode === 'auto' ? 'push' : 'auto'}">Make ${t.update_mode === 'auto' ? 'push' : 'auto'}</button></td></tr>`).join('')}</table></div>
+    <div class="row" style="margin-top:8px"><div class="fit"><button class="btn" id="push_all">Push v${esc(d.latest || '')} to all</button></div></div></div>`;
+}
+async function viewReleases() {
+  const d = await api('releases');
+  const ov = isAdmin() ? await api('overview') : { tenants: [] };
+  let u = null;
+  if (isAdmin()) { try { u = await api('update_status'); } catch (e) { u = { error: e.message }; } }
+  main.innerHTML = (isAdmin() ? updateCard(u) : '<div class="card"><span class="tag warn">Only admins can upload versions.</span></div>') +
+    `<div class="card"><h3>Releases customers are told about</h3><div class="tbl"><table><tr><th>Version</th><th>Published</th><th>Notes</th><th>Force</th><th>Status</th><th></th></tr>
+    ${d.releases.map((r) => `<tr><td><b>v${esc(r.version)}</b> ${r.version === d.latest ? '<span class="tag ok">latest</span>' : ''}</td><td>${esc(r.published_at.slice(0, 16))}</td><td>${esc(r.notes || '')}</td>
+      <td>${+r.force_update ? '<span class="tag warn">forced</span>' : '-'}</td><td>${+r.retired ? '<span class="tag">retired</span>' : 'live'}</td>
+      <td class="r">${isAdmin() ? `<button class="btn sec" data-f="${r.id}" data-v="${+r.force_update}">${+r.force_update ? 'Unforce' : 'Force'}</button> <button class="btn sec" data-t="${r.id}" data-v="${+r.retired}">${+r.retired ? 'Restore' : 'Retire'}</button>` : ''}</td></tr>`).join('')}</table></div></div>
+    ${isAdmin() ? rolloutCard(d, ov) : ''}
+    ${isAdmin() ? `<details class="card"><summary style="cursor:pointer;font-weight:700">Publish a notice only (files already on the server)</summary>
+      <div class="row" style="margin-top:8px"><div><label>Version</label><input id="rv" placeholder="1.2.0"></div><div style="flex:3"><label>What changed</label><input id="rn"></div>
+      <div class="fit"><label><input id="rf" type="checkbox" style="width:auto"> Force update</label></div><div class="fit"><button class="btn sec" id="rp">Publish</button></div></div><div class="err" id="re"></div></details>` : ''}`;
+  if (!isAdmin()) return;
+  main.querySelectorAll('[data-push]').forEach((b) => b.onclick = async () => { try { await api('rollout', { action: 'push', tenant_id: b.dataset.push }); viewReleases(); } catch (e) { alert(e.message); } });
+  main.querySelectorAll('[data-mode]').forEach((b) => b.onclick = async () => { try { await api('rollout', { action: 'mode', tenant_id: b.dataset.mode, mode: b.dataset.to }); viewReleases(); } catch (e) { alert(e.message); } });
+  $('#push_all').onclick = async () => { if (!confirm('Push the latest version to every Push customer?')) return; try { await api('rollout', { action: 'push', all: true }); viewReleases(); } catch (e) { alert(e.message); } };
+  $('#rp').onclick = async () => { try { await api('release_publish', { version: $('#rv').value.trim(), notes: $('#rn').value, force_update: $('#rf').checked }); viewReleases(); } catch (e) { $('#re').textContent = e.message; } };
+  const upd = (k) => async (e) => { await api('release_update', { id: e.target.dataset[k], [k === 'f' ? 'force_update' : 'retired']: +e.target.dataset.v ? 0 : 1 }); viewReleases(); };
+  main.querySelectorAll('[data-f]').forEach((b) => b.onclick = upd('f')); main.querySelectorAll('[data-t]').forEach((b) => b.onclick = upd('t'));
+  if (!u || u.error) return;
+  if ($('#uk_save')) $('#uk_save').onclick = async () => {
+    try { await api('update_key_set', { public_key: $('#uk_pub').value.trim(), db_password: $('#uk_db').value }); viewReleases(); } catch (e) { $('#uk_err').textContent = e.message; }
+  };
+  if ($('#up_go')) $('#up_go').onclick = async () => {
+    const f = $('#up_file').files[0]; $('#up_err').textContent = ''; $('#up_ok').textContent = '';
+    if (!f) { $('#up_err').textContent = ERR.no_file; return; }
+    if (!confirm('Install ' + f.name + ' now? Registers keep selling; the server backs up first and restores if anything fails.')) return;
+    const fd = new FormData(); fd.append('pkg', f); fd.append('notes', $('#up_notes').value); if ($('#up_force').checked) fd.append('force', '1');
+    const btn = $('#up_go'); btn.disabled = true; btn.textContent = 'Installing... keep this page open';
+    try {
+      const res = await fetch(new URL(API + '?r=update_upload', location.href), { method: 'POST', headers: { 'X-Staff-Token': S.tok }, body: fd });
+      let j = {}; try { j = await res.json(); } catch (e) { /* non-JSON (server limit page) */ }
+      if (res.status === 401) { sessionStorage.clear(); location.reload(); return; }
+      if (!res.ok) throw new Error(ERR[j.error] || j.error || (res.status === 413 ? ERR.file_too_big_for_server : 'Server error ' + res.status));
+      $('#up_ok').textContent = 'Installed v' + j.version + ' (' + j.files + ' files' + (j.migrations.length ? ', ' + j.migrations.length + ' database update(s)' : '') + '). Reloading...';
+      setTimeout(() => location.reload(), 2000);
+    } catch (e) { $('#up_err').textContent = e.message; btn.disabled = false; btn.textContent = 'Upload and install'; }
+  };
+  main.querySelectorAll('[data-rb]').forEach((b) => b.onclick = async () => {
+    if (!confirm('Roll back to the previous version? Files are restored; database updates stay.')) return;
+    try { await api('update_rollback', { id: +b.dataset.rb }); location.reload(); } catch (e) { alert(e.message); }
+  });
+}
+
+async function viewStaff() {
+  if (!isAdmin()) { main.innerHTML = '<div class="card">Admins only.</div>'; return; }
+  const d = await api('staff_list');
+  main.innerHTML = `<div class="card"><div class="row"><h2 style="margin:0">Adnys staff</h2><div class="fit"><button class="btn" id="ns">+ Staff</button></div></div>
+    <table><tr><th>Name</th><th>Email</th><th>Role</th><th></th></tr>${d.staff.map((s) => `<tr><td>${esc(s.name)} ${+s.active ? '' : '<span class="tag bad">disabled</span>'}</td><td>${esc(s.email)}</td><td>${esc(s.role)}</td>
+    <td class="r"><button class="btn sec" data-r="${s.id}">Reset password</button> ${s.id == S.me.id ? '' : `<button class="btn sec" data-x="${s.id}" data-on="${+s.active}">${+s.active ? 'Disable' : 'Enable'}</button>`}</td></tr>`).join('')}</table>
+    <p style="color:var(--mute);font-size:13px">Support staff create and edit customers, shops, registers and users. Admins also suspend customers, publish versions and manage staff.</p></div>`;
+  $('#ns').onclick = async () => { const r = await retry('New staff member', [{ k: 'name', l: 'Name', req: 1 }, { k: 'email', l: 'Email', type: 'email', req: 1 }, { k: 'role', l: 'Role', opts: [['support', 'Support'], ['admin', 'Admin']] }], (o) => api('staff_save', o), 'Create', ''); if (r) { showPass('Staff created', r); viewStaff(); } };
+  main.querySelectorAll('[data-r]').forEach((b) => b.onclick = async () => { if (confirm('Reset this password?')) showPass('New password', await api('staff_action', { staff_id: b.dataset.r, action: 'reset' })); });
+  main.querySelectorAll('[data-x]').forEach((b) => b.onclick = async () => { try { await api('staff_action', { staff_id: b.dataset.x, action: +b.dataset.on ? 'disable' : 'enable' }); viewStaff(); } catch (e) { alert(e.message); } });
+}
+
+async function viewLog() {
+  const d = await api('audit');
+  main.innerHTML = `<div class="card"><h2>Activity</h2><div class="tbl"><table><tr><th>When</th><th>Who</th><th>Action</th><th>Detail</th></tr>${d.rows.map((r) => `<tr><td>${esc(r.created_at.slice(0, 16))}</td><td>${esc(r.staff)}</td><td>${esc(r.action)}</td><td>${esc(r.detail || '')}</td></tr>`).join('')}</table></div></div>`;
+}
+
+async function route() {
+  const h = location.hash.slice(1) || 'home';
+  document.querySelectorAll('header.top a[data-v]').forEach((a) => a.classList.toggle('on', a.dataset.v === (/^t\d+$/.test(h) ? 'home' : h)));
+  try {
+    if (/^t\d+$/.test(h)) await viewTenant(+h.slice(1));
+    else if (h === 'rel') await viewReleases(); else if (h === 'staff') await viewStaff(); else if (h === 'log') await viewLog(); else await viewHome();
+  } catch (e) { main.innerHTML = `<div class="card err">${esc(e.message)}</div>`; }
+}
+function start() { $('#who').textContent = S.me.name + ' (' + S.me.role + ')'; route(); }
+window.addEventListener('hashchange', () => { if (S.tok) route(); });
+$('#out').onclick = async () => { try { await api('logout', {}); } catch (e) { /* ignore */ } sessionStorage.clear(); location.reload(); };
+S.tok ? start() : login();
+</script>
+<script src="../assets/pwa.js?v=6ee69c42eb" data-sw="sw.js"></script>
+</body>
+</html>

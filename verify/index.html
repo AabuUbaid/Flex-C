@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Verify invoice</title><meta name="robots" content="noindex">
+<style>
+:root{--brand:#0f766e;--ink:#10302d;--mute:#5b6f6c;--bg:#eef2f6;--ok:#16a34a;--bad:#dc2626}
+*{box-sizing:border-box}body{margin:0;font:15px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:var(--ink);background:radial-gradient(900px 360px at 10% -10%,#d9f2ee,transparent 60%),var(--bg)}
+.w{max-width:560px;margin:0 auto;padding:16px}
+.card{background:#fff;border-radius:18px;box-shadow:0 1px 3px #0f172a14,0 10px 30px #0f172a0f;padding:20px;margin-bottom:14px}
+.st{display:flex;gap:12px;align-items:center}.ck{width:46px;height:46px;border-radius:50%;display:grid;place-items:center;background:#dcfce7;color:var(--ok);flex:none}
+.ck.x{background:#fee2e2;color:var(--bad)}.ck svg{width:26px;height:26px;stroke:currentColor;fill:none;stroke-width:3;stroke-linecap:round;stroke-linejoin:round}
+h1{margin:0;font-size:19px}.m{color:var(--mute);font-size:13px}.logo{max-height:56px;max-width:160px;margin-bottom:8px}
+table{width:100%;border-collapse:collapse;margin-top:10px;font-size:14px}th{font-size:11px;text-transform:uppercase;color:var(--mute);text-align:left;padding:6px 4px;border-bottom:1px solid #e3e9ee}
+td{padding:7px 4px;border-bottom:1px solid #eef2f6;vertical-align:top}.r{text-align:right;white-space:nowrap}
+.tot div{display:flex;justify-content:space-between;padding:3px 0;color:var(--mute)}.tot .g{color:var(--ink);font-size:22px;font-weight:800;border-top:1px dashed #cbd5e1;margin-top:6px;padding-top:8px}
+.pw{text-align:center;color:var(--mute);font-size:12px;padding:6px 0 24px}.pw a{color:var(--brand);font-weight:700;text-decoration:none}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:3px 12px;margin-top:12px;font-size:14px}.kv span:nth-child(odd){color:var(--mute)}
+</style></head><body><div class="w" id="app"><div class="card m">Checking...</div></div>
+<script>
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+const f2 = (n) => (Math.round((+n + Number.EPSILON) * 100) / 100).toFixed(2);
+const tick = '<svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>', cross = '<svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+const foot = '<div class="pw">Powered by <a href="https://adnys.com" target="_blank" rel="noopener">Adnys</a></div>';
+(async () => {
+  const q = new URLSearchParams(location.search), u = new URL('../api/index.php', location.href);
+  u.searchParams.set('r', 'verify'); if (q.get('s')) u.searchParams.set('s', q.get('s')); if (q.get('p')) u.searchParams.set('p', q.get('p'));
+  let j = {}; try { j = await (await fetch(u, { cache: 'no-store' })).json(); } catch (e) { j = { found: false, reason: 'offline' }; }
+  const app = $('#app');
+  if (!j.found) {
+    const why = { not_synced: 'This bill is not on the server yet. If it was just issued, try again in a few minutes.', unknown: 'No document matches this link.', bad_link: 'This link is not valid.', offline: 'Could not reach the server. Check your internet and scan again.' }[j.reason] || 'Not found.';
+    app.innerHTML = `<div class="card"><div class="st"><div class="ck x">${cross}</div><div><h1>Not verified</h1><div class="m">${esc(why)}</div></div></div></div>${foot}`; return;
+  }
+  const d = j.doc, sale = j.kind === 'sale', credit = sale && d.type === 'return';
+  const rows = d.lines.map((l) => sale
+    ? `<tr><td>${esc(l.name)}<div class="m">${+l.qty} x ${f2(l.unit_price)} · VAT ${+l.vat_rate}%</div></td><td class="r">${f2(l.line_total)}</td></tr>`
+    : `<tr><td>${esc(l.name)}<div class="m">${+l.qty} x ${f2(l.unit_cost)} · VAT ${+l.vat_rate}%</div></td><td class="r">${f2(l.line_total)}</td></tr>`).join('');
+  const net = sale ? d.net_total : d.subtotal;
+  const vat = sale ? d.vat_by_rate.map((v) => `<div><span>VAT ${v.rate}% on ${f2(v.net)}</span><span>${f2(v.vat)}</span></div>`).join('')
+    : `<div><span>VAT</span><span>${f2(d.vat_total)}</span></div>`;
+  app.innerHTML = `<div class="card"><div class="st"><div class="ck">${tick}</div><div><h1>${sale ? (credit ? 'Credit note verified' : 'Invoice verified') : 'Purchase bill verified'}</h1><div class="m">Issued by ${esc(d.company_name)}. تم التحقق</div></div></div>
+    <div class="kv"><span>Seller</span><b>${esc(d.company_name)}</b>${d.company_name_ar ? `<span></span><span>${esc(d.company_name_ar)}</span>` : ''}
+      <span>TRN</span><b>${esc(d.company_trn || '-')}</b>
+      <span>${sale ? 'Invoice no' : 'Bill no'}</span><b>${esc(sale ? d.invoice_no : d.bill_no)}</b>
+      <span>Date</span><b>${esc(sale ? d.sold_at : d.bill_date)}</b>
+      <span>Shop</span><b>${esc(d.shop_name)}</b>
+      ${sale ? '' : `<span>Supplier</span><b>${esc(d.supplier_name)}${d.supplier_trn ? ' · TRN ' + esc(d.supplier_trn) : ''}</b>`}</div></div>
+    <div class="card"><b>Items and VAT rate</b><table><tr><th>Item</th><th class="r">Total incl. VAT</th></tr>${rows}</table>
+    <div class="tot" style="margin-top:12px"><div><span>Amount excl. VAT</span><span>${f2(net)}</span></div>${vat}<div class="g"><span>Total (AED)</span><span>${f2(d.total)}</span></div></div></div>${foot}`;
+})();
+</script></body></html>

@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en" data-app="stock" data-theme="light" class="bw">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="../assets/icons/stock-32.png" type="image/png">
+<link rel="apple-touch-icon" href="../assets/icons/stock-apple.png">
+<meta name="theme-color" content="#000000">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Flex-C Stock">
+<meta name="description" content="Flex-C stock take for stockers: scan products, first scan asks the rate, every next scan adds to the count.">
+<title>Flex-C Stock Take</title>
+<link rel="stylesheet" href="../assets/app.css?v=498d606380">
+<style>.wrap1{max-width:720px;margin:0 auto;padding:14px}</style>
+</head>
+<body class="stocker">
+<header class="top">
+  <span class="brandmark">F</span><b>Flex-C Stock</b>
+  <span class="sp"></span><small id="who"></small><button id="out">Sign out</button>
+</header>
+<main class="wrap1"><div id="view"></div></main>
+<script src="../assets/icons.js?v=b59449fc8d"></script>
+<script src="../assets/scan.js?v=f88b94a03b"></script>
+<script src="../assets/stocktake.js?v=ec86ebfce7"></script>
+<script src="../assets/app.js?v=52d847de3f"></script>
+<script>
+// Stock app: only the scanning screen. Stockers, and owner / manager when they want to scan too.
+window.TAKE_STANDALONE = true;
+let TAB = 'take', CO = 0;
+const view = () => $('#view');
+const msg = (el, text, ok) => { el.className = ok ? 'okmsg' : 'err'; el.textContent = text; };
+const shopsOf = () => (S.org && S.org.shops) || [];
+const shopOpts = () => shopsOf().map((s) => `<option value="${s.id}">${esc(s.name)} (${esc(s.code)})</option>`).join('');
+$('#out').onclick = signOut;
+try { localStorage.setItem('fc_bw', '1'); } catch (e) { /* ignore */ }
+startPage(async () => {
+  CO = ((S.org && S.org.companies) || [])[0] ? S.org.companies[0].id : 0;
+  try { await takeScanner(null); hydrateIcons(view()); } catch (e) { view().innerHTML = `<div class="card err">${esc(niceErr(e))}</div>`; }
+}, ['stocker', 'owner', 'manager']);
+{ const by = document.querySelector('.overlay .by'); if (by) by.textContent = 'Stock take - stocker sign in'; }
+</script>
+<script src="../assets/pwa.js?v=6ee69c42eb" data-sw="sw.js"></script>
+</body>
+</html>

@@ -1,0 +1,1502 @@
+<!doctype html>
+<html lang="en" data-app="office">
+<head>
+<meta charset="utf-8">
+<script>try{if(localStorage.getItem('fc_bw')==='1')document.documentElement.classList.add('bw')}catch(e){}</script>
+<script>try{var t=localStorage.getItem('fc_theme');if(t!=='dark'&&t!=='light')t=matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light';document.documentElement.dataset.theme=t}catch(e){}</script>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="../assets/icons/office-32.png" type="image/png">
+<link rel="apple-touch-icon" href="../assets/icons/office-apple.png">
+<meta name="theme-color" content="#4338ca">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Flex-C Office">
+<title>Flex-C Back Office</title>
+<link rel="stylesheet" href="../assets/app.css?v=498d606380">
+
+</head>
+<body>
+<header class="top">
+  <span class="brandmark">F</span><b>Flex-C</b>
+  <a href="../dashboard/">Dashboard</a><a class="on" href="./">Back office</a><a href="../pos/">POS</a>
+  <span class="sp"></span><small id="who"></small><button id="out">Sign out</button>
+</header>
+<div class="wrap shell">
+  <aside id="side">
+    <button type="button" id="sideTog" class="sidetog" aria-label="Open menu"><span class="bars">&#9776;</span> <b id="sideCur">Menu</b> <span class="chev">&#9662;</span></button>
+    <div class="sidebody">
+      <div class="co"><label>Company</label><select id="co"></select></div>
+      <div class="msearch"><input id="menuQ" type="search" placeholder="Search menu (press /)" autocomplete="off" aria-label="Search menu"><div class="mall"><button type="button" id="mOpen">Expand all</button><button type="button" id="mShut">Collapse all</button></div></div>
+      <nav class="tabs" id="tabs"></nav>
+    </div>
+  </aside>
+  <main id="main"><div id="view"></div></main>
+  <datalist id="dl"></datalist>
+</div>
+<div id="printArea"></div>
+<script src="../assets/icons.js?v=b59449fc8d"></script>
+<script src="../assets/scan.js?v=f88b94a03b"></script>
+<script src="../assets/barcode.js?v=1aee91e66f"></script>
+<script src="../assets/qr.js?v=d3461c1385"></script>
+<script src="../assets/stocktake.js?v=ec86ebfce7"></script>
+<script src="../assets/app.js?v=52d847de3f"></script>
+<script>
+let CO = 0, TAB = 'suppliers', ITEMS = [], LEDGER_ITEM = 0, SETTINGS = null;
+const view = () => $('#view');
+const isEditor = () => ['owner', 'manager'].includes(S.user.role);
+const isOffice = () => ['owner', 'manager', 'accountant'].includes(S.user.role);
+const shopsOf = () => (S.org.shops || []).filter((s) => s.company_id === CO);
+const shopOpts = (all) => (all ? '<option value="">All shops</option>' : '') + shopsOf().map((s) => `<option value="${s.id}">${esc(s.name)} (${esc(s.code)})</option>`).join('');
+const itemKey = (i) => i.sku + ' — ' + i.name;
+const findItem = (t) => { const k = String(t).trim().toLowerCase(), z = /^\d+$/.test(k) ? k.replace(/^0+/, '') : null;
+  return ITEMS.find((i) => itemKey(i) === t) || ITEMS.find((i) => i.sku.toLowerCase() === k) || ITEMS.find((i) => (i.barcodes || []).some((b) => String(b).toLowerCase() === k))
+    || (z ? ITEMS.find((i) => (i.barcodes || []).some((b) => /^\d+$/.test(b) && String(b).replace(/^0+/, '') === z)) : undefined); };   // 000000016587 = 16587
+// A search box above a <select> (supplier lists): typing hides options that do not match and picks the first match.
+function findSelect(id, what) {
+  const sel = document.getElementById(id); if (!sel || sel.dataset.fs) return; sel.dataset.fs = '1';
+  const inp = document.createElement('input'); inp.type = 'search'; inp.placeholder = 'Type to find ' + (what || 'supplier'); inp.autocomplete = 'off'; inp.style.marginBottom = '4px';
+  sel.parentNode.insertBefore(inp, sel);
+  inp.oninput = () => {
+    const q = inp.value.trim().toLowerCase(); let first = null;
+    [...sel.options].forEach((o) => { const hit = !q || o.text.toLowerCase().includes(q); o.hidden = !hit; o.disabled = !hit && !!o.value; if (hit && !first) first = o; });
+    if (first && (sel.selectedOptions[0] || {}).hidden !== false) sel.value = first.value;
+    if (first && sel.selectedOptions[0] && sel.selectedOptions[0].hidden) sel.value = first.value;
+  };
+}
+const msg = (el, text, ok) => { el.className = ok ? 'okmsg' : 'err'; el.textContent = text; };
+const tagLevel = (l) => l === 'bad' ? 'bad' : l === 'warn' ? 'warn' : 'ok';
+const ROLE_LABEL = { owner: 'Owner / sub-owner', manager: 'Manager', accountant: 'Accountant', cashier: 'Cashier', purchase: 'Purchase team', stocker: 'Stocker (stock take only)' };
+const ROLES = [['owner', 'Sub-owner (all controls)'], ['manager', 'Manager'], ['accountant', 'Accountant'], ['cashier', 'Cashier'], ['purchase', 'Purchase team'], ['stocker', 'Stocker (stock take only)']];
+async function loadItems() {
+  ITEMS = (await api('items_list', { params: { company_id: CO } })).items;
+  $('#dl').innerHTML = ITEMS.map((i) => `<option value="${esc(itemKey(i))}">`).join('');
+}
+async function settings() {
+  if (SETTINGS) return SETTINGS;
+  try { SETTINGS = (await api('settings_get')).settings; } catch (e) { SETTINGS = S.settings || { currency: 'AED' }; }
+  return SETTINGS;
+}
+
+const TAB_DEFS = {
+  // Menu in working order: suppliers -> purchase -> items -> stock -> sales -> accounts -> expenses -> reports -> settings
+  suppliers: { group: 'Suppliers', label: 'Suppliers & payments', roles: ['owner', 'manager', 'accountant', 'purchase'], fn: tSuppliers },
+  purchases: { group: 'Purchase', label: 'Purchases', roles: ['owner', 'manager', 'accountant', 'purchase'], fn: tPurchases },
+  sreturns: { group: 'Purchase', label: 'Purchase returns', roles: ['owner', 'manager', 'accountant', 'purchase'], fn: tSReturns },
+  items: { group: 'Items', label: 'Item master (scan)', roles: ['owner', 'manager', 'accountant', 'purchase'], fn: tItems },
+  labels: { group: 'Items', label: 'Barcode labels', roles: ['owner', 'manager', 'accountant', 'purchase'], fn: tLabels },
+  barhist: { group: 'Items', label: 'Barcode history', roles: ['owner', 'manager', 'accountant', 'purchase'], fn: tBarHist },
+  stock: { group: 'Stock', label: 'Stock levels & transfers', roles: ['owner', 'manager', 'accountant', 'purchase'], fn: tStock },
+  take: { group: 'Stock', label: 'Stock take (team)', roles: ['owner', 'manager', 'stocker'], fn: tTake },
+  scan: { group: 'Stock', label: 'Scan stock (phone)', roles: ['owner', 'manager'], fn: tScanCount },
+  import: { group: 'Stock', label: 'Import stock (Excel)', roles: ['owner', 'manager'], fn: tImport },
+  reports: { group: 'Sales', label: 'Sales report', roles: ['owner', 'manager', 'accountant'], fn: tReports },
+  returns: { group: 'Sales', label: 'Sales returns', roles: ['owner', 'manager', 'accountant'], fn: tReturns },
+  customers: { group: 'Sales', label: 'Customers', roles: ['owner', 'manager', 'accountant'], fn: tCustomers },
+  closings: { group: 'Accounts', label: 'Cash-ups', roles: ['owner', 'manager', 'accountant'], fn: tClosings },
+  vat: { group: 'Accounts', label: 'VAT return', roles: ['owner', 'manager', 'accountant'], fn: tVat },
+  checks: { group: 'Accounts', label: 'Checks', roles: ['owner', 'manager', 'accountant'], fn: tChecks },
+  expenses: { group: 'Expenses', label: 'Expenses', roles: ['owner', 'manager', 'accountant'], fn: tExpenses },
+  profit: { group: 'Reports', label: 'Profit summary (monthly)', roles: ['owner', 'manager', 'accountant'], fn: tProfit },
+  stockrep: { group: 'Reports', label: 'Stock report', roles: ['owner', 'manager', 'accountant', 'purchase'], fn: tStockReport },
+  ledger: { group: 'Reports', label: 'Stock record', roles: ['owner', 'manager', 'accountant', 'purchase'], fn: tLedger },
+  notifications: { group: 'Reports', label: 'Alerts', roles: ['owner', 'manager', 'accountant', 'purchase'], fn: tNotifications },
+  users: { group: 'Settings', label: 'Users', roles: ['owner', 'manager'], fn: tUsers },
+  company: { group: 'Settings', label: 'Company', roles: ['owner', 'manager', 'accountant'], fn: tCompany },
+  settings: { group: 'Settings', label: 'Preferences & logos', roles: ['owner', 'manager'], fn: tSettings },
+  backup: { group: 'Settings', label: 'Backup and export', roles: ['owner', 'accountant'], fn: tBackup },
+};
+function allowedTabs() { return Object.entries(TAB_DEFS).filter(([, v]) => v.roles.includes(S.user.role)); }
+const ORDER = Object.keys(TAB_DEFS);
+const GROUPS = ['Suppliers', 'Purchase', 'Items', 'Stock', 'Sales', 'Accounts', 'Expenses', 'Reports', 'Settings'];
+const GCOL = { 'Suppliers': '#b45309', 'Purchase': '#c2410c', 'Items': '#047857', 'Stock': '#0f766e', 'Sales': '#0369a1', 'Accounts': '#6d28d9', 'Expenses': '#be123c', 'Reports': '#1d4ed8', 'Settings': '#475569' };
+let MENU_Q = '';
+const collapsed = (() => { try { return new Set(JSON.parse(localStorage.getItem('fc_menu_closed') || '[]')); } catch (e) { return new Set(); } })();
+const saveCollapsed = () => { try { localStorage.setItem('fc_menu_closed', JSON.stringify([...collapsed])); } catch (e) { /* ignore */ } };
+function drawTabs() {
+  const list = allowedTabs();
+  if (!list.some(([k]) => k === TAB)) TAB = list.length ? list[0][0] : 'items';
+  const q = MENU_Q.trim().toLowerCase();
+  const curGroup = TAB_DEFS[TAB] && TAB_DEFS[TAB].group;
+  $('#tabs').innerHTML = GROUPS.map((g) => {
+    const items = list.filter(([, v]) => v.group === g && (!q || v.label.toLowerCase().includes(q) || g.toLowerCase().includes(q))).sort((a, b) => ORDER.indexOf(a[0]) - ORDER.indexOf(b[0]));
+    if (!items.length) return '';
+    const shut = !q && collapsed.has(g), st = ` style="--gc:${GCOL[g] || '#475569'}"`;
+    return `<button type="button" class="grp${shut ? ' shut' : ''}" data-g="${g}" aria-expanded="${!shut}"${st}><span>${g} <em>${items.length}</em></span><i>&#9662;</i></button>` +
+      (shut ? '' : items.map(([k, v]) => `<button data-t="${k}" class="sub${k === TAB ? ' on' : ''}"${st}>${v.label}</button>`).join(''));
+  }).join('') || '<div class="hint" style="padding:8px 10px">No menu matches.</div>';
+  const cur = TAB_DEFS[TAB]; $('#sideCur').textContent = cur ? cur.label : '';
+}
+async function show() {
+  if (TAB_DEFS[TAB] && collapsed.delete(TAB_DEFS[TAB].group)) saveCollapsed();   // opening a page opens its group
+  drawTabs();
+  if (location.hash.slice(1) !== TAB) history.replaceState(null, '', '#' + TAB);
+  view().innerHTML = '<div class="card">Loading...</div>';
+  try { await TAB_DEFS[TAB].fn(); hydrateIcons(view()); } catch (e) { view().innerHTML = `<div class="card err">${esc(niceErr(e))}</div>`; }
+}
+$('#tabs').addEventListener('click', (e) => { const b = e.target.closest('[data-t]'); if (b) { TAB = b.dataset.t; $('#side').classList.remove('open'); show(); window.scrollTo(0, 0); } });
+$('#tabs').addEventListener('click', (e) => { const g = e.target.closest('[data-g]'); if (!g) return; const n = g.dataset.g; if (collapsed.has(n)) collapsed.delete(n); else collapsed.add(n); saveCollapsed(); drawTabs(); });
+$('#mOpen').onclick = () => { collapsed.clear(); saveCollapsed(); drawTabs(); };
+$('#mShut').onclick = () => { GROUPS.forEach((g) => collapsed.add(g)); saveCollapsed(); drawTabs(); };
+$('#menuQ').addEventListener('input', (e) => { MENU_Q = e.target.value; drawTabs(); });
+$('#menuQ').addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') { e.target.value = ''; MENU_Q = ''; drawTabs(); }
+  if (e.key === 'Enter') { const b = $('#tabs [data-t]'); if (b) { TAB = b.dataset.t; e.target.value = ''; MENU_Q = ''; $('#side').classList.remove('open'); show(); } }
+});
+addEventListener('keydown', (e) => { if (e.key === '/' && !/^(INPUT|TEXTAREA|SELECT)$/.test((document.activeElement || {}).tagName || '')) { e.preventDefault(); $('#side').classList.add('open'); $('#menuQ').focus(); } });
+$('#sideTog').onclick = () => $('#side').classList.toggle('open');
+$('#co').addEventListener('change', (e) => { CO = +e.target.value; SETTINGS = null; show(); });
+$('#out').onclick = signOut;
+addEventListener('hashchange', () => {
+  const h = location.hash.slice(1);
+  if (TAB_DEFS[h] && TAB_DEFS[h].roles.includes(S.user.role) && h !== TAB) { TAB = h; show(); }
+});
+
+/* ---------------- Items ---------------- */
+async function tItems() {
+  await loadItems();
+  const edit = isEditor();
+  const samples = ITEMS.filter((i) => /^SAMPLE-[123]$/.test(i.sku) && /^Sample item /.test(i.name) && +i.active);
+  view().innerHTML = `${edit && samples.length ? `<div class="card" style="border-left:5px solid #b45309"><b>${samples.length} sample item(s)</b> from the installation (Sample item 1, 2, 3) are still in your items and on the POS.
+    <button class="btn sec" id="i_rmsamp" style="margin-left:8px">Remove sample items</button><div class="hint">Removed completely if never sold or bought; otherwise hidden from the POS. Then press Refresh on each POS.</div><div id="i_rmmsg"></div></div>` : ''}${edit ? `<div class="card" id="ms_card"></div>` : ''}${edit ? `<div class="card" id="i_card"><h3 id="i_h">Add item</h3><form id="f"><input type="hidden" id="i_id">
+    <div class="grid g2">
+      <div><label>SKU *</label><input id="i_sku" required maxlength="40"></div>
+      <div><label>Name *</label><input id="i_name" required maxlength="200"></div>
+      <div><label>Arabic name</label><input id="i_ar" dir="rtl" maxlength="200"></div>
+      <div><label>Category</label><input id="i_cat" maxlength="80"></div>
+      <div><label>Unit</label><input id="i_uom" value="pc" maxlength="10"></div>
+      <div><label>Selling price (VAT incl.) *</label><input id="i_price" type="number" step="0.01" min="0" required></div>
+      <div><label>Cost (ex VAT)</label><input id="i_cost" type="number" step="0.0001" min="0" value="0"></div>
+      <div><label>VAT %</label><input id="i_vat" type="number" step="0.01" min="0" value="5"></div>
+      <div><label>Reorder level (0 = default 10)</label><input id="i_re" type="number" step="0.001" min="0" value="0"></div>
+      <div><label>Barcodes (comma separated)</label><div style="display:flex;gap:6px"><input id="i_bc" style="flex:1"><button type="button" class="btn sec" id="i_scan" data-ic="camera">Scan</button></div></div>
+    </div>
+    <label><input type="checkbox" id="i_act" checked style="width:auto"> Active (shown on the POS)</label>
+    <div class="row" style="margin-top:10px"><div class="fit"><button class="btn">Save item</button></div><div class="fit"><button class="btn sec" type="button" id="i_new">Clear</button></div>${S.user.role === 'owner' ? '<div class="fit"><button class="btn sec" type="button" id="i_del" style="display:none;color:#b91c1c">Delete item</button></div>' : ''}</div>
+    <div class="hint">Edit: owner and manager. Delete: owner only; an item that is on old bills cannot be deleted (VAT records need it), it is hidden from the POS instead.</div>
+    <div id="i_msg"></div></form></div>` : `<div class="card"><span class="tag warn">View only</span> <span class="hint">Items are edited by owners and managers.</span></div>`}
+    <div class="card"><div class="row"><div><label>Search</label><input id="i_q" placeholder="name, SKU or barcode"></div></div>
+    <div class="tbl"><table id="i_tb"></table></div></div>`;
+  const draw = (q) => {
+    q = q.trim().toLowerCase();
+    const list = ITEMS.filter((i) => !q || i.name.toLowerCase().includes(q) || i.sku.toLowerCase().includes(q) || (i.barcodes || []).some((b) => b.toLowerCase().includes(q)));
+    $('#i_tb').innerHTML = `<tr><th>SKU</th><th>Name</th><th class="r">Price</th><th class="r">Cost</th><th class="r">VAT%</th><th class="r">Reorder</th><th>Barcodes</th>${edit ? '<th></th>' : ''}</tr>` +
+      list.slice(0, 2000).map((i) => `<tr><td>${esc(i.sku)}</td><td>${esc(i.name)}${+i.active ? '' : ' <span class="tag bad">hidden</span>'}</td><td class="r">${money(i.price)}</td><td class="r">${money(i.cost)}</td><td class="r">${+i.vat_rate}</td><td class="r">${+i.reorder_level || ''}</td><td>${esc((i.barcodes || []).join(', '))}</td>${edit ? `<td style="white-space:nowrap"><button class="btn sec" data-e="${i.id}">Edit</button>${S.user.role === 'owner' ? ` <button class="btn sec" data-d="${i.id}" style="color:#b91c1c" title="Delete (owner)">Delete</button>` : ''}</td>` : ''}</tr>`).join('') + (list.length > 2000 ? '<tr><td colspan="8" class="hint">First 2000 shown; search to find others.</td></tr>' : '');
+  };
+  draw('');
+  $('#i_q').oninput = (e) => draw(e.target.value);
+  if (!edit) return;
+  itemScanner(() => draw($('#i_q').value));
+  if ($('#i_rmsamp')) $('#i_rmsamp').onclick = async () => {
+    if (!confirm('Remove the 3 sample items (and their sample stock)?')) return;
+    try { const r = await api('items_remove_samples', { body: { company_id: CO } }); await tItems(); msg($('#ms_msg') || $('#i_msg'), `Sample items: ${r.removed} removed, ${r.hidden} hidden. Press Refresh on each POS.`, true); } catch (e) { msg($('#i_rmmsg'), niceErr(e)); }
+  };
+  const clear = () => { $('#f').reset(); $('#i_id').value = ''; $('#i_act').checked = true; $('#i_h').textContent = 'Add item'; if ($('#i_del')) $('#i_del').style.display = 'none'; };
+  $('#i_new').onclick = clear;
+  // Owner: delete an item; one that is on old bills is hidden instead (after asking).
+  const delItem = async (i) => {
+    if (!confirm(`Delete "${i.name}" (${i.sku})? Its barcodes and its stock records are removed. This cannot be undone.`)) return;
+    try {
+      const r = await api('item_delete', { body: { company_id: CO, item_id: i.id } });
+      await tItems(); msg($('#i_msg'), `Deleted ${i.name}${r.stock_was ? ' (stock was ' + r.stock_was + ')' : ''}. Press Refresh on each POS.`, true);
+    } catch (err) {
+      const [c, n] = String(err.message).split(':');
+      if (c === 'item_used') {
+        if (!confirm(`"${i.name}" is on ${n} bill line(s), so it cannot be deleted (old bills and VAT need it). Hide it from the POS and lists instead?`)) return;
+        try { await api('item_delete', { body: { company_id: CO, item_id: i.id, hide_if_used: true } }); await tItems(); msg($('#i_msg'), `${i.name} is hidden (inactive). Edit it and tick Active to show it again.`, true); } catch (e2) { alert(niceErr(e2)); }
+      } else alert(niceErr(err));
+    }
+  };
+  if ($('#i_del')) $('#i_del').onclick = () => { const i = ITEMS.find((x) => x.id === +$('#i_id').value); if (i) delItem(i); };
+  $('#i_tb').onclick = (e) => {
+    const d = e.target.closest('[data-d]'); if (d) { delItem(ITEMS.find((x) => x.id === +d.dataset.d)); return; }
+    const b = e.target.closest('[data-e]'); if (!b) return;
+    const i = ITEMS.find((x) => x.id === +b.dataset.e);
+    $('#i_h').textContent = 'Edit item: ' + i.name; if ($('#i_del')) $('#i_del').style.display = '';
+    $('#i_id').value = i.id; $('#i_sku').value = i.sku; $('#i_name').value = i.name; $('#i_ar').value = i.name_ar || ''; $('#i_cat').value = i.category || '';
+    $('#i_uom').value = i.uom; $('#i_price').value = i.price; $('#i_cost').value = i.cost; $('#i_vat').value = i.vat_rate; $('#i_re').value = i.reorder_level;
+    $('#i_bc').value = (i.barcodes || []).join(', '); $('#i_act').checked = !!+i.active; $('#i_card').scrollIntoView({ behavior: 'smooth' }); $('#i_name').focus();
+  };
+  if ($('#i_scan')) $('#i_scan').onclick = () => FlexScan.open((code, say) => {
+    const cur = $('#i_bc').value.split(/[\s,]+/).filter(Boolean);
+    const other = ITEMS.find((x) => (x.barcodes || []).includes(code) && x.id !== +($('#i_id').value || 0));
+    if (other) return say('<b style="color:#b91c1c">' + FlexScan.esc(code) + ' already belongs to ' + FlexScan.esc(other.name) + '.</b>');
+    if (!cur.includes(code)) cur.push(code);
+    $('#i_bc').value = cur.join(', '); say('Captured <b>' + FlexScan.esc(code) + '</b>. Press Done, then Save item.');
+  });
+  $('#f').onsubmit = async (e) => {
+    e.preventDefault();
+    try {
+      await api('items_save', { body: { id: +$('#i_id').value || 0, company_id: CO, sku: $('#i_sku').value, name: $('#i_name').value, name_ar: $('#i_ar').value, category: $('#i_cat').value, uom: $('#i_uom').value,
+        price: $('#i_price').value, cost: $('#i_cost').value, vat_rate: $('#i_vat').value, reorder_level: $('#i_re').value, barcodes: $('#i_bc').value.split(/[\s,]+/).filter(Boolean), active: $('#i_act').checked } });
+      await tItems(); msg($('#i_msg'), 'Saved.', true);
+    } catch (err) { msg($('#i_msg'), niceErr(err)); }
+  };
+}
+
+/* ---------------- Stock ---------------- */
+async function tStock() {
+  await loadItems();
+  const edit = isEditor();
+  view().innerHTML = `<div class="card"><div class="row"><div><label>Shop</label><select id="s_shop">${shopOpts(true)}</select></div>
+    <div><label>Show</label><select id="s_f"><option value="">All items</option><option value="low">Low stock only</option></select></div>
+    <div class="fit"><label>&nbsp;</label><button class="btn sec" id="s_csv" data-ic="download">CSV</button></div></div>
+    <div class="hint">Low stock means quantity at or below the item's reorder level, or the default (10) when no level is set.</div>
+    <div class="tbl"><table id="s_tb"></table></div></div>
+    ${edit ? `<div class="grid g2">
+    <div class="card"><h3>Adjust stock / opening stock</h3><form id="a_f">
+      <label>Shop</label><select id="a_shop">${shopOpts()}</select>
+      <label>Item</label><input id="a_item" list="dl" required placeholder="SKU or name">
+      <label>Quantity (use minus to remove)</label><input id="a_qty" type="number" step="0.001" required>
+      <label>Type</label><select id="a_type"><option value="adjust">Adjustment (damage, count correction)</option><option value="opening">Opening stock</option></select>
+      <label>Note</label><input id="a_note" maxlength="255">
+      <div style="margin-top:10px"><button class="btn">Post</button></div><div id="a_msg"></div></form></div>
+    <div class="card"><h3>Transfer between shops</h3><form id="t_f">
+      <label>From</label><select id="t_from">${shopOpts()}</select>
+      <label>To</label><select id="t_to">${shopOpts()}</select>
+      <label>Item</label><input id="t_item" list="dl" required placeholder="SKU or name">
+      <label>Quantity</label><input id="t_qty" type="number" step="0.001" min="0.001" required>
+      <div style="margin-top:10px"><button class="btn">Transfer</button></div><div id="t_msg"></div></form></div></div>`
+      : `<div class="card"><span class="tag warn">View only</span> <span class="hint">Stock adjustments and transfers are for owners and managers.</span></div>`}`;
+  let rows = [];
+  const load = async () => {
+    const r = await api('stock_levels', { params: { company_id: CO, shop_id: $('#s_shop').value } });
+    rows = r.rows.filter((x) => $('#s_f').value !== 'low' || x.low);
+    $('#s_tb').innerHTML = `<tr><th>Item</th><th>Shop</th><th class="r">Qty</th><th class="r">Alert at</th><th class="r">Value</th><th>Status</th><th></th></tr>` +
+      rows.map((x) => `<tr class="${x.low ? 'lowrow' : ''}"><td>${esc(x.sku)} · ${esc(x.name)}</td><td>${esc(x.shop_name)}</td><td class="r ${cls(x.qty)}">${+x.qty}</td><td class="r">${+x.threshold}</td><td class="r">${money(x.qty * x.cost)}</td>
+        <td>${x.qty < 0 ? '<span class="tag bad">negative</span>' : x.low ? '<span class="tag warn">low</span>' : '<span class="tag ok">ok</span>'}</td>
+        <td><button class="btn sec" data-ledger="${x.item_id}" data-shop="${x.shop_id}">History</button></td></tr>`).join('') || '<tr><td colspan="7">No items.</td></tr>';
+  };
+  $('#s_shop').onchange = load; $('#s_f').onchange = load; await load();
+  $('#s_tb').onclick = (e) => { const b = e.target.closest('[data-ledger]'); if (b) { LEDGER_ITEM = +b.dataset.ledger; TAB = 'ledger'; show(); } };
+  $('#s_csv').onclick = () => downloadCsv(`stock-${today()}.csv`, [['SKU', 'Item', 'Shop', 'Qty', 'Alert at', 'Unit cost', 'Value', 'Status']].concat(rows.map((x) => [x.sku, x.name, x.shop_name, x.qty, x.threshold, x.cost, (x.qty * x.cost).toFixed(2), x.qty < 0 ? 'negative' : x.low ? 'low' : 'ok'])));
+  if (!edit) return;
+  const toShops = shopsOf(); if (toShops.length > 1) $('#t_to').selectedIndex = 1;
+  $('#a_f').onsubmit = async (e) => {
+    e.preventDefault(); const it = findItem($('#a_item').value);
+    if (!it) return msg($('#a_msg'), 'Pick an item from the list.');
+    try { await api('stock_adjust', { body: { shop_id: +$('#a_shop').value, item_id: it.id, qty: $('#a_qty').value, type: $('#a_type').value, note: $('#a_note').value } }); msg($('#a_msg'), 'Posted.', true); $('#a_f').reset(); load(); }
+    catch (err) { msg($('#a_msg'), niceErr(err)); }
+  };
+  $('#t_f').onsubmit = async (e) => {
+    e.preventDefault(); const it = findItem($('#t_item').value);
+    if (!it) return msg($('#t_msg'), 'Pick an item from the list.');
+    try { await api('stock_transfer', { body: { from_shop_id: +$('#t_from').value, to_shop_id: +$('#t_to').value, item_id: it.id, qty: $('#t_qty').value } }); msg($('#t_msg'), 'Transferred.', true); $('#t_qty').value = ''; load(); }
+    catch (err) { msg($('#t_msg'), niceErr(err)); }
+  };
+}
+
+/* ---------------- Stock ledger ---------------- */
+async function tLedger() {
+  await loadItems();
+  const li = ITEMS.find((i) => i.id === LEDGER_ITEM);
+  view().innerHTML = `<div class="card"><div class="row">
+    <div><label>From</label><input id="l_from" type="date" value="${monthStart()}"></div>
+    <div><label>To</label><input id="l_to" type="date" value="${today()}"></div>
+    <div><label>Shop</label><select id="l_shop">${shopOpts(true)}</select></div>
+    <div><label>Item</label><input id="l_item" list="dl" placeholder="All items" value="${li ? esc(itemKey(li)) : ''}"></div>
+    <div><label>Type</label><select id="l_type"><option value="">All movements</option><option value="sale">Sales</option><option value="purchase">Purchases</option><option value="adjust">Adjustments</option><option value="opening">Opening</option><option value="transfer_in">Transfer in</option><option value="transfer_out">Transfer out</option></select></div>
+    <div class="fit"><label>&nbsp;</label><button class="btn" id="l_go">Show</button></div>
+    <div class="fit"><label>&nbsp;</label><button class="btn sec" id="l_csv" data-ic="download">CSV</button></div></div>
+    <div class="hint" id="l_sum"></div>
+    <div class="tbl"><table id="l_tb"></table></div></div>`;
+  let rows = [], totals = { in: 0, out: 0 };
+  const load = async () => {
+    const it = findItem($('#l_item').value);
+    const r = await api('stock_ledger', { params: { company_id: CO, shop_id: $('#l_shop').value, item_id: it ? it.id : '', type: $('#l_type').value, from: $('#l_from').value, to: $('#l_to').value } });
+    rows = r.rows; totals = r;
+    $('#l_sum').textContent = `${rows.length} movement(s) · in ${r.in} · out ${r.out}`;
+    $('#l_tb').innerHTML = `<tr><th>When</th><th>Item</th><th>Shop</th><th class="r">In</th><th class="r">Out</th><th>Type</th><th>User</th><th>Note</th></tr>` +
+      rows.map((x) => `<tr><td>${esc(x.created_at.slice(0, 16))}</td><td>${esc(x.sku)} · ${esc(x.item_name)}</td><td>${esc(x.shop)}</td>
+        <td class="r pos">${+x.qty > 0 ? +x.qty : ''}</td><td class="r neg">${+x.qty < 0 ? -x.qty : ''}</td>
+        <td><span class="tag">${esc(x.ref_type)}</span></td><td>${esc(x.user_name || '')}</td><td>${esc(x.note || '')}</td></tr>`).join('') || '<tr><td colspan="8">No movements in this range.</td></tr>';
+  };
+  $('#l_go').onclick = load; $('#l_from').onchange = load; $('#l_to').onchange = load; $('#l_shop').onchange = load; $('#l_type').onchange = load;
+  $('#l_item').addEventListener('change', load);
+  $('#l_csv').onclick = () => downloadCsv(`stock-record-${$('#l_from').value}-${$('#l_to').value}.csv`, [['When', 'SKU', 'Item', 'Shop', 'Qty', 'Unit cost', 'Type', 'User', 'Note']].concat(rows.map((x) => [x.created_at, x.sku, x.item_name, x.shop, x.qty, x.unit_cost, x.ref_type, x.user_name || '', x.note || ''])));
+  await load();
+}
+
+/* ---------------- Purchases ---------------- */
+async function tPurchases() {
+  await loadItems();
+  const sups = (await api('suppliers_list', { params: { company_id: CO } })).suppliers;
+  view().innerHTML = `<div class="card"><h3>New purchase (goods receipt + supplier bill)</h3><form id="p_f">
+    <div class="grid g3">
+      <div><label>Supplier *</label><select id="p_sup" required>${sups.map((s) => `<option value="${s.id}">${esc(s.name)}</option>`).join('') || '<option value="">Add a supplier first</option>'}</select></div>
+      <div><label>Receiving shop *</label><select id="p_shop">${shopOpts()}</select></div>
+      <div><label>Supplier bill no *</label><input id="p_no" required maxlength="40"></div>
+      <div><label>Bill date</label><input id="p_date" type="date" value="${today()}"></div>
+      <div><label>Paid now (AED)</label><input id="p_paid" type="number" step="0.01" min="0" value="0"></div>
+      <div><label>Paid by</label><select id="p_m"><option>cash</option><option>card</option><option>bank</option><option>cheque</option></select></div>
+      <div><label>Supplier bill total incl. VAT (as printed) *</label><input id="p_dt" type="number" step="0.01" min="0" required placeholder="copy from the paper bill"></div>
+      <div><label>Total units on the bill</label><input id="p_dq" type="number" step="0.001" min="0" placeholder="optional, catches missed lines"></div>
+    </div>
+    <div class="row" style="margin-top:10px;align-items:flex-end"><div style="flex:1"><label>Scan or type a barcode / SKU, then Enter (12*code adds 12)</label><input id="p_scan" autocomplete="off" placeholder="Barcode scanner works here"></div><div class="fit"><button type="button" class="btn sec" id="p_cam" data-ic="camera">Scan with camera</button></div><div class="fit"><button type="button" class="btn sec" id="p_new">+ New item</button></div></div>
+    <div class="hint">A code or item that is not in your list opens the <b>New item</b> window: save it and it goes straight onto this bill.</div>
+    <div class="tbl" style="margin-top:10px"><table><thead><tr><th style="width:40%">Item</th><th>Billed qty</th><th>Received</th><th>Cost ex VAT</th><th>VAT %</th><th class="r">Line total</th><th></th></tr></thead><tbody id="p_lines"></tbody></table></div>
+    <div class="row" style="margin-top:8px"><div class="fit"><button class="btn sec" type="button" id="p_add">+ Add line</button></div><div style="text-align:right;font-size:18px;font-weight:800">Total: <span id="p_tot">0.00</span><div id="p_chk" style="font-size:13px;font-weight:600"></div></div></div>
+    <div style="margin-top:10px"><button class="btn" id="p_save">Save purchase</button></div><div id="p_msg"></div></form></div>
+    <div class="card"><h3>Recent purchases (30 days)</h3><div class="tbl"><table id="p_tb"></table></div></div>`;
+  const calc = () => {
+    let t = 0;
+    document.querySelectorAll('#p_lines tr').forEach((tr) => {
+      const q = +$('.q', tr).value || 0, c = +$('.c', tr).value || 0, v = +$('.v', tr).value || 0;
+      const lt = q * c * (1 + v / 100); $('.t', tr).textContent = money(lt); t += lt;
+    });
+    $('#p_tot').textContent = money(t);
+    let units = 0; document.querySelectorAll('#p_lines tr').forEach((tr) => { if ($('.it', tr).value.trim()) units += +$('.q', tr).value || 0; });
+    const dt = $('#p_dt').value, dq = $('#p_dq').value, out = [];
+    const tag = (ok, txt) => `<span style="color:${ok ? '#15803d' : '#b91c1c'}">${ok ? '✓' : '✗'} ${txt}</span>`;
+    if (dt !== '') out.push(Math.abs(+dt - t) <= 0.05 ? tag(true, 'matches the supplier bill') : tag(false, 'differs from supplier bill by ' + money(t - +dt)));
+    if (dq !== '') out.push(Math.abs(+dq - units) <= 0.0005 ? tag(true, units + ' units match') : tag(false, 'lines have ' + units + ' units, bill says ' + dq));
+    const sh = [...document.querySelectorAll('#p_lines tr')].filter((tr) => $('.rv', tr).value !== '' && Math.abs(+$('.rv', tr).value - +$('.q', tr).value) > 0.0005).length;
+    const cv = [...document.querySelectorAll('#p_lines tr')].filter((tr) => { const it = findItem($('.it', tr).value); return it && Math.abs(+$('.c', tr).value - +it.cost) > 0.005 && +it.cost > 0; }).length;
+    if (cv) out.push(`<span style="color:#b45309">ℹ ${cv} line(s) cost differs from the last buy rate (the bill rate is used and the new average cost is calculated)</span>`);
+    if (sh) out.push(`<span style="color:#b45309">⚠ ${sh} line(s) received differ from billed</span>`);
+    $('#p_chk').innerHTML = out.join('<br>');
+  };
+  const addLine = () => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td><input class="it" list="dl" placeholder="SKU or name"></td><td><input class="q" type="number" step="0.001" min="0.001" value="1"></td><td><input class="rv" type="number" step="0.001" min="0" placeholder="same"></td><td><input class="c" type="number" step="0.0001" min="0" value="0"></td><td><input class="v" type="number" step="0.01" min="0" value="5"></td><td class="r t">0.00</td><td><button type="button" class="btn sec x">×</button></td>`;
+    $('#p_lines').appendChild(tr);
+  };
+  addLine();
+  $('#p_add').onclick = addLine;
+  // Add or top up a line for a scanned / typed item.
+  findSelect('p_sup');
+  const addScanned = (code, n) => {
+    const it = findItem(code); if (!it) return null;
+    let tr = [...document.querySelectorAll('#p_lines tr')].find((r) => $('.it', r).value && (findItem($('.it', r).value) || {}).id === it.id);
+    if (tr) { $('.q', tr).value = Math.round((+$('.q', tr).value + n) * 1000) / 1000; }
+    else {
+      tr = [...document.querySelectorAll('#p_lines tr')].find((r) => !$('.it', r).value.trim());
+      if (!tr) { addLine(); tr = $('#p_lines').lastElementChild; }
+      $('.it', tr).value = itemKey(it); $('.c', tr).value = +it.cost; $('.v', tr).value = +it.vat_rate; $('.q', tr).value = n;
+    }
+    calc(); return it;
+  };
+  $('#p_scan').addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return; e.preventDefault();
+    let v = e.target.value.trim(), n = 1; if (!v) return;
+    const m = v.match(/^(\d+(?:\.\d+)?)\s*[*x×]\s*(.+)$/); if (!findItem(v) && m && +m[1] > 0) { n = +m[1]; v = m[2]; }
+    if (addScanned(v, n)) { e.target.value = ''; return; }
+    e.target.value = '';
+    quickItem({ code: v }).then((it) => { if (it) { addScanned(it.sku, n); msg($('#p_msg'), 'New item ' + it.name + ' added to the bill.', true); } $('#p_scan').focus(); });
+  });
+  let camBusy = false;
+  const cam = () => FlexScan.open((code, say) => {
+    if (camBusy) return;
+    const it = addScanned(code, 1);
+    if (it) { say('Added: <b>' + FlexScan.esc(it.name) + '</b> - scan next or press Done'); return; }
+    camBusy = true; FlexScan.close();
+    quickItem({ code }).then((ni) => { camBusy = false; if (ni) addScanned(ni.sku, 1); setTimeout(cam, 300); });
+  });
+  $('#p_cam').onclick = cam;
+  $('#p_new').onclick = () => quickItem({}).then((it) => { if (it) addScanned(it.sku, 1); });
+  $('#p_dt').oninput = $('#p_dq').oninput = calc;
+  $('#p_lines').addEventListener('input', (e) => {
+    const tr = e.target.closest('tr');
+    if (e.target.classList.contains('it')) { const it = findItem(e.target.value); if (it) { $('.c', tr).value = +it.cost; $('.v', tr).value = +it.vat_rate; } }
+    calc();
+  });
+  $('#p_lines').addEventListener('click', (e) => { if (e.target.classList.contains('x')) { e.target.closest('tr').remove(); calc(); } });
+  // Typed a name or code on a line that is not an item: offer the New item window right away.
+  $('#p_lines').addEventListener('change', (e) => {
+    if (!e.target.classList.contains('it')) return;
+    const tr = e.target.closest('tr'), v = e.target.value.trim();
+    if (!v || findItem(v)) return;
+    quickItem({ code: v, cost: +$('.c', tr).value || '', vat: $('.v', tr).value }).then((it) => {
+      if (!it) { e.target.select(); return; }
+      $('.it', tr).value = itemKey(it); $('.c', tr).value = +it.cost; $('.v', tr).value = +it.vat_rate; calc(); $('.q', tr).focus(); $('.q', tr).select();
+    });
+  });
+  $('#p_f').onsubmit = async (e) => {
+    e.preventDefault();
+    const lines = [];
+    for (const tr of document.querySelectorAll('#p_lines tr')) {
+      if (!$('.it', tr).value.trim()) continue;
+      const it = findItem($('.it', tr).value);
+      if (!it) { msg($('#p_msg'), 'Unknown item: ' + $('.it', tr).value + '. Add it with + New item.'); return; }
+      lines.push({ item_id: it.id, qty: $('.q', tr).value, recv_qty: $('.rv', tr).value, unit_cost: $('.c', tr).value, vat_rate: $('.v', tr).value });
+    }
+    if (!lines.length) return msg($('#p_msg'), 'Add at least one item.');
+    try {
+      const r = await api('purchase_save', { body: { company_id: CO, shop_id: +$('#p_shop').value, supplier_id: +$('#p_sup').value, bill_no: $('#p_no').value, bill_date: $('#p_date').value, paid_now: $('#p_paid').value, method: $('#p_m').value, declared_total: $('#p_dt').value, declared_qty: $('#p_dq').value, lines } });
+      await tPurchases(); msg($('#p_msg'), 'Saved. Bill total ' + money(r.total) + ' matches the supplier bill. Stock and supplier balance updated.', true);
+    } catch (err) { msg($('#p_msg'), niceErr(err)); }
+  };
+  const list = (await api('purchases_list', { params: { company_id: CO } })).purchases;
+  $('#p_tb').innerHTML = `<tr><th>Date</th><th>Bill</th><th>Supplier</th><th>Shop</th><th class="r">Total</th><th class="r">Paid</th><th class="r">Due</th><th>Proof</th><th></th></tr>` +
+    list.map((p) => { const due = p.total - p.paid; return `<tr><td>${esc(p.bill_date)}</td><td>${esc(p.bill_no)}</td><td>${esc(p.supplier)}</td><td>${esc(p.shop)}</td><td class="r">${money(p.total)}</td><td class="r">${money(p.paid)}</td><td class="r ${due > 0.005 ? 'warn' : ''}">${money(due)}</td><td>${+p.verified ? '<span class="tag ok" title="Bill total checked against the supplier bill">✓ total</span>' : '<span class="tag warn" title="No supplier total entered">no total</span>'} ${+p.photos ? `<span class="tag ok">📷 ${+p.photos}</span>` : ''} ${+p.has_short ? '<span class="tag bad">short/excess</span>' : ''}</td><td style="white-space:nowrap"><button class="btn sec" data-pf="${p.id}">Proof</button> <button class="btn sec" data-pp="${p.id}">A4 bill</button></td></tr>`; }).join('');
+  $('#p_tb').onclick = (e) => {
+    const b = e.target.closest('[data-pp]'); if (b) printPurchase(+b.dataset.pp).catch((err) => alert(niceErr(err)));
+    const f = e.target.closest('[data-pf]'); if (f) purchaseProof(+f.dataset.pf).catch((err) => alert(niceErr(err)));
+  };
+}
+/* Reduce a phone photo to ~1600px JPEG before upload. */
+function shrinkImage(file) {
+  return new Promise((res, rej) => {
+    const im = new Image(), url = URL.createObjectURL(file);
+    im.onload = () => {
+      const k = Math.min(1, 1600 / Math.max(im.width, im.height)), c = document.createElement('canvas');
+      c.width = Math.round(im.width * k); c.height = Math.round(im.height * k);
+      c.getContext('2d').drawImage(im, 0, 0, c.width, c.height); URL.revokeObjectURL(url);
+      res(c.toDataURL('image/jpeg', 0.8));
+    };
+    im.onerror = () => rej(new Error('bad_image')); im.src = url;
+  });
+}
+async function purchaseProof(id) {
+  const p = (await api('purchase_get', { params: { id } })).purchase;
+  const dlg = document.createElement('dialog'); dlg.style.cssText = 'max-width:min(96vw,720px);width:100%';
+  const rows = p.lines.map((l) => { const rv = l.recv_qty === null || l.recv_qty === undefined ? +l.qty : +l.recv_qty; const d = Math.round((rv - l.qty) * 1000) / 1000;
+    return `<tr><td>${esc(l.name)}</td><td class="r">${+l.qty}</td><td class="r">${rv}</td><td class="r ${d ? 'warn' : ''}">${d ? (d > 0 ? '+' : '') + d : 'ok'}</td><td class="r">${money(l.line_total)}</td></tr>`; }).join('');
+  const inLedger = Math.round(p.ledger.reduce((a, l) => a + +l.qty, 0) * 1000) / 1000, recvSum = Math.round(p.lines.reduce((a, l) => a + (l.recv_qty === null || l.recv_qty === undefined ? +l.qty : +l.recv_qty), 0) * 1000) / 1000;
+  dlg.innerHTML = `<h3 style="margin:0 0 6px">Proof: bill ${esc(p.bill_no)}</h3>
+    <div class="hint">${esc(p.supplier_name)} · ${esc(p.bill_date)} · ${esc(p.shop_name)}<br>Entered by ${esc(p.entered_by || '-')} on ${esc(p.created_at)}</div>
+    <div class="tbl" style="margin-top:8px"><table><tr><th>Item</th><th class="r">Billed</th><th class="r">Received</th><th class="r">Diff</th><th class="r">Line total</th></tr>${rows}</table></div>
+    <ul style="line-height:1.7">
+      <li>${p.declared_total !== null && p.declared_total !== undefined ? (Math.abs(+p.declared_total - +p.total) <= 0.05 ? '✓' : '✗') + ` Total ${money(p.total)} vs supplier bill ${money(p.declared_total)}` : '⚠ No supplier bill total was entered'}</li>
+      <li>${Math.abs(inLedger - recvSum) < 0.0005 ? '✓' : '✗'} Stock record: ${inLedger} units added in ${p.ledger.length} stock entries (received ${recvSum})</li>
+      <li>${p.declared_qty !== null && p.declared_qty !== undefined ? '✓ Units on bill ' + +p.declared_qty : 'Units on bill not entered'}</li>
+      <li>${p.files.length ? '📷 ' + p.files.length + ' photo(s) attached' : 'No photo attached (optional)'}</li></ul>
+    <div id="pf_imgs"></div>
+    <div class="row" style="margin-top:8px"><div class="fit"><input id="pf_add" type="file" accept="image/*" capture="environment"></div><div class="fit"><button class="btn sec" id="pf_up">Add photo (optional)</button></div><div style="flex:1"></div><div class="fit"><button class="btn" id="pf_x">Close</button></div></div><div id="pf_msg"></div>`;
+  document.body.appendChild(dlg); dlg.showModal();
+  dlg.querySelector('#pf_x').onclick = () => { dlg.close(); dlg.remove(); };
+  dlg.querySelector('#pf_up').onclick = async () => { const f = dlg.querySelector('#pf_add').files[0]; if (!f) return; try { await api('purchase_attach', { body: { purchase_id: id, image: await shrinkImage(f) } }); dlg.close(); dlg.remove(); purchaseProof(id); tPurchases(); } catch (er) { msg(dlg.querySelector('#pf_msg'), niceErr(er)); } };
+  for (const f of p.files) { try { const r = await api('purchase_file', { params: { id: f.id } }); dlg.querySelector('#pf_imgs').insertAdjacentHTML('beforeend', `<img src="${r.image}" style="max-width:100%;max-height:320px;border:1px solid #e2e8f0;border-radius:8px;margin:4px 4px 0 0">`); } catch (e) { /* ignore */ } }
+}
+async function printPurchase(id) {
+  const p = (await api('purchase_get', { params: { id } })).purchase;
+  const qrOn = (await settings()).qr_enabled !== 0;
+  const rows = (p.lines || []).map((l) => `<tr><td>${esc(l.name)}${l.name_ar ? '<div class="muted">' + esc(l.name_ar) + '</div>' : ''}</td><td class="r">${+l.qty}</td><td class="r">${money(l.unit_cost)}</td><td class="r">${+l.vat_rate}%</td><td class="r">${money(l.line_total)}</td></tr>`).join('');
+  const logo = (src, st) => src ? `<img src="${esc(src)}" alt="" style="${st}">` : '';
+  printHtml(`<div class="a4">
+    <div class="head"><div>${logo(p.company_logo, 'max-height:60px;max-width:160px')}<h1>${esc(p.company_name)}</h1>${p.company_name_ar ? `<div class="muted">${esc(p.company_name_ar)}</div>` : ''}
+      <div class="muted">${esc(p.company_address || '')}${p.company_phone ? ' · ' + esc(p.company_phone) : ''}</div><div><b>TRN: ${esc(p.company_trn || '-')}</b></div></div>
+      <div class="right">${logo(p.shop_logo, 'max-height:52px;max-width:120px;margin-left:auto')}<h2>PURCHASE BILL</h2>
+        <div><b>Bill no:</b> ${esc(p.bill_no)}</div><div><b>Date:</b> ${esc(p.bill_date)}</div><div><b>Shop:</b> ${esc(p.shop_name)} (${esc(p.shop_code)})</div></div></div>
+    <div style="margin-top:12px"><b>Supplier</b><div>${esc(p.supplier_name)}</div>${p.supplier_phone ? `<div>${esc(p.supplier_phone)}</div>` : ''}${p.supplier_trn ? `<div>TRN: ${esc(p.supplier_trn)}</div>` : ''}</div>
+    <table><thead><tr><th>Description</th><th class="r">Qty</th><th class="r">Unit cost</th><th class="r">VAT</th><th class="r">Line total</th></tr></thead><tbody>${rows}</tbody></table>
+    <div class="totals"><div><span>Subtotal excl. VAT</span><span>${money(p.subtotal)}</span></div><div><span>VAT</span><span>${money(p.vat_total)}</span></div>
+      <div class="big"><span>Total</span><span>${money(p.total)}</span></div></div>
+    <div class="foot">${(() => { try { return qrOn && p.verify_token ? `<div style="float:right;text-align:center;font-size:10px;margin-top:6px">${FlexQR.svg(new URL('../verify/?p=' + p.verify_token, location.href).href, 96)}Scan to verify</div>` : ''; } catch (e) { return ''; } })()}Goods received against this supplier bill. Powered by Adnys</div></div>`);
+}
+
+/* ---------------- VAT return ---------------- */
+function vatPeriod(kind) {
+  const t = today(), y = +t.slice(0, 4), m = +t.slice(5, 7) - 1, pad = (n) => String(n).padStart(2, '0');
+  const ymd = (yy, mm, dd) => `${yy}-${pad(mm + 1)}-${pad(dd)}`, last = (yy, mm) => new Date(yy, mm + 1, 0).getDate();
+  if (kind === 'lastm') { const d = new Date(y, m - 1, 1); return [ymd(d.getFullYear(), d.getMonth(), 1), ymd(d.getFullYear(), d.getMonth(), last(d.getFullYear(), d.getMonth()))]; }
+  if (kind === 'q' || kind === 'lastq') { let q = Math.floor(m / 3) - (kind === 'lastq' ? 1 : 0), yy = y; if (q < 0) { q = 3; yy--; } return [ymd(yy, q * 3, 1), ymd(yy, q * 3 + 2, last(yy, q * 3 + 2))]; }
+  return [monthStart(), t];
+}
+async function tVat() {
+  view().innerHTML = `<div class="card"><h3>VAT return figures</h3><div class="hint">Output VAT on sales (after sales returns) minus input VAT on purchases (after supplier returns) and expenses. Use these figures to fill the FTA VAT 201 return.</div>
+    <div class="row"><div><label>Period</label><select id="v_p"><option value="m">This month</option><option value="lastm">Last month</option><option value="q">This quarter</option><option value="lastq">Last quarter</option><option value="c">Custom dates</option></select></div>
+    <div><label>From</label><input id="v_from" type="date" value="${monthStart()}"></div><div><label>To</label><input id="v_to" type="date" value="${today()}"></div>
+    <div class="fit"><label>&nbsp;</label><button class="btn" id="v_go">Show</button></div><div class="fit"><label>&nbsp;</label><button class="btn sec" id="v_csv" data-ic="download">CSV</button></div><div class="fit"><label>&nbsp;</label><button class="btn sec" id="v_pdf" data-ic="print">Print</button></div></div></div><div id="v_body"></div>`;
+  let d = null;
+  const line = (label, o) => `<tr><td>${label}</td><td class="r">${money(o.net)}</td><td class="r">${money(o.vat)}</td><td class="r">${o.docs ?? ''}</td></tr>`;
+  const rowsOf = () => [
+    ['OUTPUT VAT (sales)', '', '', ''],
+    ['Standard-rated sales (5%)', d.output.standard.net, d.output.standard.vat, d.output.standard.docs],
+    ['Sales returns / credit notes', d.output.returns.net, d.output.returns.vat, d.output.returns.docs],
+    ['Zero-rated and exempt sales', d.output.zero_exempt.net, d.output.zero_exempt.vat, d.output.zero_exempt.docs],
+    ['Total output', d.output.total_net, d.output.total_vat, ''],
+    ['INPUT VAT (recoverable)', '', '', ''],
+    ['Standard-rated purchases', d.input.purchases.net, d.input.purchases.vat, d.input.purchases.docs],
+    ['Less: returns to suppliers', -d.input.supplier_returns.net, -d.input.supplier_returns.vat, d.input.supplier_returns.docs],
+    ['Expenses with VAT', d.input.expenses.net, d.input.expenses.vat, d.input.expenses.docs],
+    ['Total input', d.input.total_net, d.input.total_vat, ''],
+    [d.net_payable >= 0 ? 'NET VAT PAYABLE to FTA' : 'NET VAT REFUNDABLE', '', d.net_payable, '']];
+  const draw = async () => {
+    d = await api('vat_return', { params: { company_id: CO, from: $('#v_from').value, to: $('#v_to').value } });
+    const L = (l, o) => line(l, o);
+    $('#v_body').innerHTML = `<div class="card" style="border-left:5px solid ${d.net_payable > 0 ? '#b45309' : '#15803d'}"><div class="hint">${esc(d.from)} to ${esc(d.to)}</div>
+      <div style="font-size:26px;font-weight:800">${money(Math.abs(d.net_payable))} <span style="font-size:15px;font-weight:600">${d.net_payable >= 0 ? 'VAT payable' : 'VAT refundable'}</span></div></div>
+      <div class="card"><div class="tbl"><table><tr><th></th><th class="r">Amount excl. VAT</th><th class="r">VAT</th><th class="r">Documents</th></tr>
+      <tr><th colspan="4">Output VAT (sales)</th></tr>${L('Standard-rated sales (5%)', d.output.standard)}${L('Sales returns / credit notes', d.output.returns)}${L('Zero-rated and exempt sales', d.output.zero_exempt)}
+      <tr><td><b>Total output VAT</b></td><td class="r"><b>${money(d.output.total_net)}</b></td><td class="r"><b>${money(d.output.total_vat)}</b></td><td></td></tr>
+      <tr><th colspan="4">Input VAT (recoverable)</th></tr>${L('Standard-rated purchases', d.input.purchases)}${L('Less: returns to suppliers', { net: -d.input.supplier_returns.net, vat: -d.input.supplier_returns.vat, docs: d.input.supplier_returns.docs })}${L('Expenses with VAT', d.input.expenses)}
+      <tr><td><b>Total input VAT</b></td><td class="r"><b>${money(d.input.total_net)}</b></td><td class="r"><b>${money(d.input.total_vat)}</b></td><td></td></tr></table></div>
+      <div class="hint">Based on the bills, purchases and expenses saved in Flex-C for this period. Purchase VAT is taken from the supplier bills as billed. Check against your tax invoices before filing.</div></div>`;
+  };
+  $('#v_p').onchange = () => { const k = $('#v_p').value; if (k !== 'c') { const [a, b] = vatPeriod(k); $('#v_from').value = a; $('#v_to').value = b; draw(); } };
+  $('#v_go').onclick = draw; $('#v_from').onchange = $('#v_to').onchange = () => { $('#v_p').value = 'c'; };
+  $('#v_csv').onclick = () => { if (d) downloadCsv(`vat-return-${d.from}-${d.to}.csv`, [['Item', 'Amount excl VAT', 'VAT', 'Documents']].concat(rowsOf())); };
+  $('#v_pdf').onclick = () => { if (!d) return; const co = (S.org.companies || []).find((c) => c.id === CO) || {};
+    printHtml(`<div class="a4"><h1>VAT return figures</h1><div><b>${esc(co.name || '')}</b> · TRN ${esc(co.trn || '-')}</div><div class="muted">${esc(d.from)} to ${esc(d.to)}</div>
+      <table><thead><tr><th></th><th class="r">Excl. VAT</th><th class="r">VAT</th></tr></thead><tbody>${rowsOf().map((r) => `<tr><td>${esc(r[0])}</td><td class="r">${r[1] === '' ? '' : money(r[1])}</td><td class="r">${r[2] === '' ? '' : money(r[2])}</td></tr>`).join('')}</tbody></table>
+      <div class="foot">Prepared from Flex-C records. Powered by Adnys</div></div>`); };
+  await draw();
+}
+
+/* ---------------- Returns to suppliers (debit notes) ---------------- */
+async function tSReturns() {
+  await loadItems();
+  const sups = (await api('suppliers_list', { params: { company_id: CO } })).suppliers;
+  const edit = isOffice();
+  view().innerHTML = `${edit ? `<div class="card"><h3>Return goods to a supplier</h3><div class="hint">Takes the goods out of stock and reduces what you owe the supplier (debit note). Use it for damaged, expired or wrong goods.</div>
+    <form id="sr_f"><div class="row"><div><label>Supplier *</label><select id="sr_sup" required>${sups.map((s) => `<option value="${s.id}">${esc(s.name)}</option>`).join('') || '<option value="">Add a supplier first</option>'}</select></div>
+    <div><label>From shop *</label><select id="sr_shop">${shopOpts(false)}</select></div><div><label>Date</label><input id="sr_date" type="date" value="${today()}"></div>
+    <div><label>Original bill no</label><input id="sr_ref" placeholder="optional"></div><div style="flex:2"><label>Reason</label><input id="sr_why" placeholder="damaged, expired, wrong item"></div></div>
+    <div class="row" style="margin-top:8px"><div style="flex:1"><label>Scan or type a barcode / SKU, then Enter</label><input id="sr_scan" autocomplete="off"></div></div>
+    <div class="tbl" style="margin-top:8px"><table><thead><tr><th style="width:42%">Item</th><th>Qty</th><th>Cost ex VAT</th><th>VAT %</th><th class="r">Total</th><th></th></tr></thead><tbody id="sr_lines"></tbody></table></div>
+    <div class="row" style="margin-top:8px"><div class="fit"><button type="button" class="btn sec" id="sr_add">+ Add line</button></div><div style="flex:1"></div><div style="font-size:18px;font-weight:800">Credit: <span id="sr_tot">0.00</span></div></div>
+    <div class="row" style="margin-top:8px"><div class="fit"><button class="btn">Save debit note</button></div></div><div id="sr_msg"></div></form></div>` : ''}
+    <div class="card"><h3>Debit notes</h3><div class="tbl"><table id="sr_tb"></table></div></div>`;
+  const body = () => $('#sr_lines');
+  const calc = () => { let t = 0; body().querySelectorAll('tr').forEach((tr) => { const it = findItem($('.it', tr).value); const n = (+$('.q', tr).value || 0) * (+$('.c', tr).value || 0); const lt = it ? n * (1 + (+$('.v', tr).value || 0) / 100) : 0; $('.lt', tr).textContent = money(lt); t += lt; }); $('#sr_tot').textContent = money(t); };
+  const addLine = (it) => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td><input class="it" list="dl" placeholder="SKU or name"></td><td><input class="q" type="number" step="0.001" min="0.001" value="1"></td><td><input class="c" type="number" step="0.0001" min="0" value="0"></td><td><input class="v" type="number" step="0.01" min="0" value="5"></td><td class="r lt">0.00</td><td><button type="button" class="btn sec x">×</button></td>`;
+    body().appendChild(tr);
+    if (it) { $('.it', tr).value = itemKey(it); $('.c', tr).value = +it.cost; $('.v', tr).value = +it.vat_rate; }
+    calc(); return tr;
+  };
+  if (edit) {
+    addLine();
+    $('#sr_add').onclick = () => addLine();
+    body().addEventListener('input', (e) => { const tr = e.target.closest('tr'); if (e.target.classList.contains('it')) { const it = findItem(e.target.value); if (it) { $('.c', tr).value = +it.cost; $('.v', tr).value = +it.vat_rate; } } calc(); });
+    body().addEventListener('click', (e) => { if (e.target.classList.contains('x')) { e.target.closest('tr').remove(); calc(); } });
+    findSelect('sr_sup');
+    $('#sr_scan').addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter') return; e.preventDefault();
+      let v = e.target.value.trim(), n = 1; const m = v.match(/^(\d+(?:\.\d+)?)\s*[*x×]\s*(.+)$/); if (!findItem(v) && m) { n = +m[1]; v = m[2]; }
+      const it = findItem(v); if (!it) { msg($('#sr_msg'), 'Not registered: ' + v); return; }
+      const tr = [...body().querySelectorAll('tr')].find((r) => !$('.it', r).value.trim()) || addLine(); addLine(it); tr.remove();
+      const last = body().lastElementChild; $('.q', last).value = n; calc(); e.target.value = '';
+    });
+    $('#sr_f').onsubmit = async (e) => {
+      e.preventDefault();
+      const lines = []; for (const tr of body().querySelectorAll('tr')) { const it = findItem($('.it', tr).value); if (!it) continue; lines.push({ item_id: it.id, qty: $('.q', tr).value, unit_cost: $('.c', tr).value, vat_rate: $('.v', tr).value }); }
+      if (!lines.length) return msg($('#sr_msg'), 'Add at least one item.');
+      try {
+        const r = await api('preturn_save', { body: { company_id: CO, supplier_id: +$('#sr_sup').value, shop_id: +$('#sr_shop').value, return_date: $('#sr_date').value, bill_ref: $('#sr_ref').value, reason: $('#sr_why').value, lines } });
+        msg($('#sr_msg'), `Saved ${r.note_no}. Stock reduced and ${money(r.total)} taken off what you owe.`, true); body().innerHTML = ''; addLine(); load();
+      } catch (er) { const [c, x] = String(er.message).split(':'); msg($('#sr_msg'), c === 'not_enough_stock' ? `Not enough stock of ${x} in that shop to return.` : niceErr(er)); }
+    };
+  }
+  let rows = [];
+  async function load() {
+    rows = (await api('preturns_list', { params: { company_id: CO } })).returns;
+    $('#sr_tb').innerHTML = `<tr><th>Note</th><th>Date</th><th>Supplier</th><th>Reason</th><th class="r">Total</th><th></th></tr>` + (rows.map((r) => `<tr><td>${esc(r.note_no)}<div class="hint">${esc(r.bill_ref || '')}</div></td><td>${esc(r.return_date)}</td><td>${esc(r.supplier)}</td><td>${esc(r.reason || '')}</td><td class="r">${money(r.total)}</td><td><button class="btn sec" data-dn="${r.id}">Print</button></td></tr>`).join('') || '<tr><td colspan="6">No returns yet</td></tr>');
+  }
+  $('#sr_tb').onclick = (e) => {
+    const b = e.target.closest('[data-dn]'); if (!b) return; const r = rows.find((x) => x.id === +b.dataset.dn); const co = (S.org.companies || []).find((c) => c.id === CO) || {};
+    printHtml(`<div class="a4"><div class="head"><div><h1>${esc(co.name || '')}</h1><div class="muted">${esc(co.address || '')}</div><div><b>TRN: ${esc(co.trn || '-')}</b></div></div>
+      <div class="right"><h2>DEBIT NOTE</h2><div><b>No:</b> ${esc(r.note_no)}</div><div><b>Date:</b> ${esc(r.return_date)}</div>${r.bill_ref ? `<div><b>Bill ref:</b> ${esc(r.bill_ref)}</div>` : ''}</div></div>
+      <div style="margin-top:12px"><b>Supplier</b><div>${esc(r.supplier)}</div>${r.supplier_trn ? `<div>TRN: ${esc(r.supplier_trn)}</div>` : ''}</div>
+      <table><thead><tr><th>Description</th><th class="r">Qty</th><th class="r">Unit cost</th><th class="r">VAT</th><th class="r">Total</th></tr></thead><tbody>${r.lines.map((l) => `<tr><td>${esc(l.name)}</td><td class="r">${+l.qty}</td><td class="r">${money(l.unit_cost)}</td><td class="r">${+l.vat_rate}%</td><td class="r">${money(l.line_total)}</td></tr>`).join('')}</tbody></table>
+      <div class="totals"><div><span>Subtotal excl. VAT</span><span>${money(r.subtotal)}</span></div><div><span>VAT</span><span>${money(r.vat_total)}</span></div><div class="big"><span>Total credit</span><span>${money(r.total)}</span></div></div>
+      <div class="muted" style="margin-top:8px">${esc(r.reason || '')}</div><div class="foot">Powered by Adnys</div></div>`);
+  };
+  await load();
+}
+
+/* ---------------- Barcode labels ---------------- */
+const LABEL_SIZES = { s: ['Small 38 x 25 mm (roll)', 38, 25, 'roll'], m: ['Medium 50 x 30 mm (roll)', 50, 30, 'roll'], a4: ['A4 sheet, 3 x 8 (70 x 37 mm)', 70, 37, 'sheet'] };
+async function tLabels() {
+  await loadItems();
+  view().innerHTML = `<div class="card"><h3>Print barcode labels</h3><div class="hint">Tick the items, set how many labels each, and print. An item with a barcode prints that barcode; an item without one prints its SKU as the barcode, and the POS and Purchases scan it the same way.</div>
+    <div class="row"><div><label>Search</label><input id="lb_q" placeholder="name or SKU"></div><div><label>Label size</label><select id="lb_sz">${Object.entries(LABEL_SIZES).map(([k, v]) => `<option value="${k}">${v[0]}</option>`).join('')}</select></div>
+    <div><label>Show price</label><select id="lb_pr"><option value="1">Yes</option><option value="0">No</option></select></div>
+    <div><label>Name on top</label><select id="lb_co"><option value="co">Company: ${esc(((S.org.companies || []).find((c) => c.id === CO) || {}).name || '')}</option>${shopsOf().map((s) => `<option value="s${s.id}">Shop: ${esc(s.name)}</option>`).join('')}<option value="">None</option></select></div>
+    <div class="fit"><label>&nbsp;</label><button class="btn sec" id="lb_nob">Tick items without barcode</button></div><div class="fit"><label>&nbsp;</label><button class="btn" id="lb_go" data-ic="print">Print labels</button></div></div>
+    <div class="tbl" style="margin-top:8px"><table id="lb_tb"></table></div><div class="hint" id="lb_sum"></div></div>`;
+  const sel = new Map();
+  const draw = () => {
+    const q = $('#lb_q').value.trim().toLowerCase();
+    const list = ITEMS.filter((i) => !q || i.name.toLowerCase().includes(q) || i.sku.toLowerCase().includes(q)).slice(0, 300);
+    $('#lb_tb').innerHTML = '<tr><th></th><th>SKU</th><th>Item</th><th>Barcode used</th><th class="r">Labels</th></tr>' + list.map((i) => {
+      const code = (i.barcodes && i.barcodes[0]) || i.sku, on = sel.has(i.id);
+      return `<tr><td><input type="checkbox" data-s="${i.id}" ${on ? 'checked' : ''} style="width:auto"></td><td>${esc(i.sku)}</td><td>${esc(i.name)}</td><td>${esc(code)}${i.barcodes && i.barcodes.length ? '' : ' <span class="tag warn">SKU</span>'}</td><td class="r"><input type="number" min="1" max="500" value="${sel.get(i.id) || 1}" data-n="${i.id}" style="width:70px"></td></tr>`;
+    }).join('');
+    const tot = [...sel.values()].reduce((a, b) => a + b, 0); $('#lb_sum').textContent = `${sel.size} item(s), ${tot} label(s) selected`;
+  };
+  $('#lb_q').oninput = draw;
+  $('#lb_tb').addEventListener('change', (e) => {
+    const s = e.target.dataset.s, n = e.target.dataset.n;
+    if (s) { if (e.target.checked) sel.set(+s, +($(`[data-n="${s}"]`).value) || 1); else sel.delete(+s); }
+    if (n && sel.has(+n)) sel.set(+n, Math.max(1, Math.min(500, +e.target.value || 1)));
+    const tot = [...sel.values()].reduce((a, b) => a + b, 0); $('#lb_sum').textContent = `${sel.size} item(s), ${tot} label(s) selected`;
+  });
+  $('#lb_nob').onclick = () => { ITEMS.filter((i) => !(i.barcodes && i.barcodes.length)).forEach((i) => sel.set(i.id, sel.get(i.id) || 1)); draw(); };
+  $('#lb_go').onclick = () => {
+    if (!sel.size) return alert('Tick at least one item.');
+    const [, w, h, kind] = LABEL_SIZES[$('#lb_sz').value], showPrice = $('#lb_pr').value === '1', cur = (S.settings && S.settings.currency) || 'AED';
+    // Same order as a shop label: company (or shop) name, barcode, code, item name, price.
+    const coSel = $('#lb_co').value, top = coSel === 'co' ? (((S.org.companies || []).find((c) => c.id === CO) || {}).name || '') : coSel ? ((shopsOf().find((s) => 's' + s.id === coSel) || {}).name || '') : '';
+    const one = (i) => { const code = (i.barcodes && i.barcodes[0]) || i.sku;
+      return `<div class="lb">${top ? `<div class="t">${esc(top)}</div>` : ''}<div class="b">${FlexBar.svg(code, { h: 40, mod: 1.4 }).replace('width="', 'data-w="').replace(/height="\d+"/, 'height="100%"')}</div><div class="c">${esc(code)}</div><div class="n">${esc(i.name)}</div>${showPrice ? `<div class="p">${cur}: ${money(i.price)}</div>` : ''}</div>`; };
+    const cells = []; sel.forEach((n, id) => { const i = ITEMS.find((x) => x.id === id); if (i) for (let k = 0; k < n; k++) cells.push(one(i)); });
+    const css = `<style>.lbs{display:flex;flex-wrap:wrap;${kind === 'sheet' ? 'width:210mm;padding:11mm 0' : ''}}.lb{width:${w}mm;height:${h}mm;box-sizing:border-box;padding:1.2mm 1.5mm;overflow:hidden;text-align:center;font-family:Arial,Helvetica,sans-serif;color:#000;background:#fff;page-break-inside:avoid;${kind === 'roll' ? 'page-break-after:always;' : ''}display:flex;flex-direction:column;justify-content:space-between}
+      .lb .n{font-size:${h > 28 ? 9 : 8}px;font-weight:700;line-height:1.1;max-height:2.3em;overflow:hidden}.lb .p{font-size:${h > 28 ? 11 : 9}px;font-weight:700}.lb .b{flex:1;min-height:0;display:flex}.lb .b svg{width:100%;height:100%}.lb .c{font-size:7px;letter-spacing:.5px}.lb .t{font-size:${h > 28 ? 9 : 7.5}px;font-weight:700;line-height:1.1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      @page{size:${kind === 'sheet' ? 'A4' : w + 'mm ' + h + 'mm'};margin:0}</style>`;
+    printHtml(`${css}<div class="lbs">${cells.join('')}</div>`);
+    api('labels_log', { body: { company_id: CO, size: $('#lb_sz').value, items: [...sel].map(([id, n]) => { const i = ITEMS.find((x) => x.id === id); return { item_id: id, copies: n, code: (i.barcodes && i.barcodes[0]) || i.sku }; }) } }).catch(() => {});
+  };
+  draw();
+}
+
+/* ---------------- Barcode history ---------------- */
+async function tBarHist() {
+  await loadItems();
+  view().innerHTML = `<div class="card"><h3>Barcode history</h3><div class="hint">Which barcodes are registered to which items, and every time labels were printed (who, when, how many).</div>
+    <div class="row"><div style="flex:1"><label>Search barcode, SKU or item</label><input id="bh_q" placeholder="type to filter both lists"></div><div class="fit"><label>&nbsp;</label><button class="btn sec" id="bh_csv" data-ic="download">CSV</button></div></div></div>
+    <div class="card"><h3>Label prints</h3><div class="tbl"><table id="bh_pr"></table></div></div>
+    <div class="card"><h3>Barcode register</h3><div class="tbl"><table id="bh_reg"></table></div></div>`;
+  const prints = (await api('labels_history', { params: { company_id: CO } })).prints;
+  const SIZE = { s: '38x25 mm', m: '50x30 mm', a4: 'A4 sheet' };
+  const draw = () => {
+    const q = $('#bh_q').value.trim().toLowerCase(), hit = (...v) => !q || v.some((x) => String(x || '').toLowerCase().includes(q));
+    const p = prints.filter((r) => hit(r.code, r.sku, r.name, r.by_name));
+    $('#bh_pr').innerHTML = '<tr><th>Printed</th><th>Item</th><th>Barcode</th><th class="r">Labels</th><th>Size</th><th>By</th></tr>' + (p.map((r) => `<tr><td>${esc(r.printed_at)}</td><td>${esc(r.sku)} - ${esc(r.name)}</td><td>${esc(r.code)}</td><td class="r">${+r.copies}</td><td>${esc(SIZE[r.size_key] || r.size_key)}</td><td>${esc(r.by_name || '')}</td></tr>`).join('') || '<tr><td colspan="6">No labels printed yet</td></tr>');
+    const reg = [];
+    ITEMS.forEach((i) => { const codes = (i.barcodes && i.barcodes.length) ? i.barcodes : [null]; codes.forEach((c) => { if (hit(c, i.sku, i.name)) reg.push([i, c]); }); });
+    const last = {}; prints.forEach((r) => { if (!last[r.sku + '|' + r.code]) last[r.sku + '|' + r.code] = r; });
+    $('#bh_reg').innerHTML = '<tr><th>Item</th><th>Barcode</th><th>Last label printed</th></tr>' + (reg.map(([i, c]) => { const l = last[i.sku + '|' + (c || i.sku)]; return `<tr><td>${esc(i.sku)} - ${esc(i.name)}</td><td>${c ? esc(c) : '<span class="tag warn">none, SKU is used</span>'}</td><td>${l ? esc(l.printed_at) + ' (' + (+l.copies) + ')' : '-'}</td></tr>`; }).join('') || '<tr><td colspan="3">Nothing matches</td></tr>');
+  };
+  $('#bh_q').oninput = draw;
+  $('#bh_csv').onclick = () => downloadCsv('barcode-history-' + today() + '.csv', [['Printed', 'SKU', 'Item', 'Barcode', 'Labels', 'Size', 'By']].concat(prints.map((r) => [r.printed_at, r.sku, r.name, r.code, r.copies, r.size_key, r.by_name || ''])));
+  draw();
+}
+
+/* ---------------- Backup and export ---------------- */
+async function tScanCount() {
+  view().innerHTML = `<div class="card"><h3>Add current stock by scanning</h3>
+    <div class="hint">Open this page on your phone (the installed Flex-C Back office). Choose the shop, scan each product, type how many are on the shelf and save. Unknown barcode? Type the product details once and it is added. Use <b>Total counted</b> for your first count; <b>Add</b> if you found more.</div>
+    <label>Shop *</label><select id="sc_shop">${shopOpts()}</select>
+    <div class="row" style="margin-top:8px"><div class="fit"><button class="btn" id="sc_cam" data-ic="camera" style="padding:14px 22px;font-size:16px">Scan barcode</button></div>
+      <div style="flex:1;min-width:180px"><input id="sc_code" placeholder="or type code / barcode and press Enter" inputmode="text" autocomplete="off"></div></div>
+    <div id="sc_form"></div></div>
+    <div class="card"><h3>Counted in this session <span id="sc_n" style="float:right"></span></h3><div class="tbl"><table id="sc_tb"><tr><th>Product</th><th class="r">Was</th><th class="r">Now</th></tr></table></div></div>`;
+  const log = []; let busy = false;
+  const shopId = () => $('#sc_shop').value;
+  const drawLog = () => { $('#sc_n').textContent = log.length + ' product(s)'; $('#sc_tb').innerHTML = '<tr><th>Product</th><th class="r">Was</th><th class="r">Now</th></tr>' + log.slice().reverse().map((l) => `<tr><td>${esc(l.name)}${l.created ? ' <span class="tag ok">new</span>' : ''}</td><td class="r">${l.was}</td><td class="r"><b>${l.now}</b></td></tr>`).join(''); };
+  const form = (html) => { $('#sc_form').innerHTML = html; const f = $('#sc_qty'); if (f) { f.focus(); f.select && f.select(); } };
+  const done = (r, name) => { log.push({ name, was: r.was, now: r.now, created: r.created }); drawLog(); $('#sc_form').innerHTML = `<div class="okmsg" style="margin-top:8px">Saved: ${esc(name)} now ${r.now}</div>`; $('#sc_code').value = ''; if (window.FlexScan && $('#sc_auto') && $('#sc_auto').checked) setTimeout(cam, 500); };
+  const save = async (body, name) => {
+    try { const r = await api('stock_count', { body: { shop_id: +shopId(), ...body } }); done(r, name); } catch (e) { msg($('#sc_msg'), niceErr(e)); }
+  };
+  const lookup = async (code) => {
+    if (!code || busy) return; busy = true;
+    try {
+      const r = await api('stock_lookup', { params: { shop_id: shopId(), code } });
+      if (r.found) {
+        const it = r.item;
+        form(`<div class="card" style="margin-top:10px;background:var(--soft0,#f8fafc)"><b style="font-size:17px">${esc(it.name)}</b><div class="hint">${esc(it.sku)} · in stock now: <b>${r.stock}</b> · price ${money(it.price)}</div>
+          <div class="row"><div><label>Quantity</label><input id="sc_qty" type="number" inputmode="decimal" step="0.001" min="0" style="font-size:20px"></div>
+          <div><label>Meaning</label><select id="sc_mode"><option value="set">Total counted</option><option value="add">Add to stock</option></select></div></div>
+          <label style="margin-top:8px"><input type="checkbox" id="sc_auto" style="width:auto" checked> Scan next automatically</label>
+          <div class="row" style="margin-top:8px"><div class="fit"><button class="btn" id="sc_save">Save</button></div></div><div id="sc_msg"></div></div>`);
+        $('#sc_save').onclick = () => { if ($('#sc_qty').value === '') { msg($('#sc_msg'), 'Enter the quantity.'); return; } save({ item_id: it.id, qty: $('#sc_qty').value, mode: $('#sc_mode').value }, it.name); };
+        $('#sc_qty').onkeydown = (e) => { if (e.key === 'Enter') $('#sc_save').click(); };
+      } else {
+        form(`<div class="card" style="margin-top:10px"><b>New product</b><div class="hint">Barcode ${esc(code)} is not in your items yet. Add it now.</div>
+          <div class="grid g3"><div><label>Name *</label><input id="sc_name" maxlength="200"></div><div><label>Selling price (VAT incl.) *</label><input id="sc_price" type="number" inputmode="decimal" step="0.01" min="0"></div>
+          <div><label>Cost (no VAT)</label><input id="sc_cost" type="number" inputmode="decimal" step="0.01" min="0" value="0"></div><div><label>Quantity in stock *</label><input id="sc_qty" type="number" inputmode="decimal" step="0.001" min="0"></div>
+          <div><label>Category</label><input id="sc_cat" maxlength="80"></div></div>
+          <label style="margin-top:8px"><input type="checkbox" id="sc_auto" style="width:auto" checked> Scan next automatically</label>
+          <div class="row" style="margin-top:8px"><div class="fit"><button class="btn" id="sc_save">Add product and stock</button></div></div><div id="sc_msg"></div></div>`);
+        $('#sc_name').focus();
+        $('#sc_save').onclick = () => { const n = $('#sc_name').value.trim(); if (!n || !$('#sc_price').value || $('#sc_qty').value === '') { msg($('#sc_msg'), 'Name, price and quantity are required.'); return; }
+          save({ barcode: code, sku: code, name: n, price: $('#sc_price').value, cost: $('#sc_cost').value || 0, category: $('#sc_cat').value, qty: $('#sc_qty').value, mode: 'set' }, n); };
+      }
+    } catch (e) { $('#sc_form').innerHTML = `<div class="err">${esc(niceErr(e))}</div>`; }
+    busy = false;
+  };
+  const cam = () => FlexScan.open((code) => { FlexScan.close(); lookup(code); });
+  $('#sc_cam').onclick = cam;
+  $('#sc_code').onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); lookup($('#sc_code').value.trim()); } };
+  drawLog();
+}
+
+async function tImport() {
+  view().innerHTML = `<div class="card"><h3>Import stock from Excel</h3>
+    <div class="hint">Bring your item list (and, if you want, your stock) from Excel into Flex-C. After this, record every purchase and sale in Flex-C.</div>
+    <label style="margin-top:10px">What to import</label>
+    <label style="display:flex;gap:8px;align-items:flex-start;margin:4px 0"><input type="radio" name="im_mode" value="items" style="width:auto;margin-top:3px" checked> <span><b>Items only</b>: item codes, names, unit, cost and selling price. <b>Stock is not changed.</b> Then stockers count the real stock with <b>Stock take (team)</b>: at the first scan they enter the quantity on the shelf and the selling price.</span></label>
+    <label style="display:flex;gap:8px;align-items:flex-start;margin:4px 0 10px"><input type="radio" name="im_mode" value="stock" style="width:auto;margin-top:3px"> <span><b>Items and stock</b>: also sets each item's stock in the shop to the Qty in the file.</span></label>
+    <div class="row"><div><label>Shop *</label><select id="im_shop">${shopOpts()}</select></div><div style="flex:2"><label>Excel (.xlsx or old .xls) or CSV file *</label><input id="im_file" type="file" accept=".xlsx,.xls,.csv,.txt"></div></div>
+    <div class="row" style="margin-top:8px"><div class="fit"><button class="btn sec" id="im_check">1. Check file</button></div><div class="fit"><button class="btn" id="im_go" disabled>2. Import</button></div><div class="fit"><button class="btn sec" id="im_tpl" data-ic="download">Download template</button></div></div>
+    <div class="hint" style="margin-top:8px"><b>Columns</b> (first row, any order): <b>Code</b> (your item code, or use the barcode), <b>Name</b>, <b>Barcode</b>, <b>Category</b>, <b>Unit</b>, <b>Cost</b> (buying price, without VAT), <b>Price</b> (selling price, VAT included), <b>VAT</b> (5), <b>Qty</b> (current stock), <b>Reorder</b>, <b>Name_AR</b>. Required: Code or Barcode, and Qty. Stock lists exported from other shop programs also work (for example <b>Item Code, Description, Qty, Unit, Cost, S.Price 1</b>, in .xls). Fixed for you and listed as notes: codes with spaces (KU RTA becomes KU-RTA), negative stock (imported as 0), impossible stock (row skipped), missing price (0) or name (code used). If any row has a real error nothing is imported.</div>
+    <div id="im_msg"></div></div>`;
+  const post = async (dry) => {
+    const f = $('#im_file').files[0]; if (!f) throw new Error('Choose a file first.');
+    const fd = new FormData(); fd.append('file', f); fd.append('company_id', CO); fd.append('shop_id', $('#im_shop').value); if (dry) fd.append('dry', '1');
+    if ((document.querySelector('[name=im_mode]:checked') || {}).value !== 'stock') fd.append('items_only', '1');
+    const res = await fetch(new URL(API + '?r=stock_import', location.href), { method: 'POST', headers: { 'X-Auth-Token': S.tok }, body: fd });
+    let j = {}; try { j = await res.json(); } catch (e) { /* non-JSON */ }
+    if (res.status === 401) { sessionStorage.clear(); location.reload(); throw new Error('session_expired'); }
+    if (!res.ok && j.error !== 'import_errors') throw new Error(ERR[j.error] || j.error || 'Server error ' + res.status);
+    return j;
+  };
+  const show = (j) => {
+    const errs = (j.errors || []).length ? `<div class="card err" style="margin-top:8px"><b>${j.error_count} problem(s)</b><ul style="margin:6px 0 0;padding-left:18px">${j.errors.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></div>` : '';
+    const warns = (j.warnings || []).length ? `<details class="card" style="margin-top:8px;border-left:5px solid #b45309"><summary><b>${j.warning_count} note(s)</b>: fixed automatically, the import can go ahead. Tap to see.</summary><ul style="margin:6px 0 0;padding-left:18px;max-height:300px;overflow:auto">${j.warnings.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></details>` : '';
+    const rows = (j.preview || []).map((p) => `<tr><td>${esc(p.code)}</td><td>${esc(p.name)} ${p.is_new ? '<span class="tag ok">new</span>' : ''}</td><td class="r">${p.was}</td><td class="r"><b>${j.items_only ? 'unchanged' : p.qty}</b></td></tr>`).join('');
+    $('#im_msg').className = ''; $('#im_msg').innerHTML = `<div style="margin-top:10px"><b>${j.rows}</b> row(s): <b>${j.new_items}</b> new item(s), <b>${j.existing_items}</b> existing, ${j.items_only ? '<b>items only, stock not changed</b>' : `<b>${j.stock_changes}</b> stock change(s)`}.</div>${errs}${warns}${rows ? `<div class="tbl" style="margin-top:8px"><table><tr><th>Code</th><th>Item</th><th class="r">Stock now</th><th class="r">Will be</th></tr>${rows}</table><div class="hint">First 15 rows shown.</div></div>` : ''}`;
+  };
+  $('#im_check').onclick = async () => { try { const j = await post(true); show(j); $('#im_go').disabled = !!j.error_count; } catch (e) { $('#im_go').disabled = true; msg($('#im_msg'), niceErr(e)); } };
+  $('#im_file').onchange = () => { $('#im_go').disabled = true; $('#im_msg').innerHTML = ''; };
+  document.querySelectorAll('[name=im_mode]').forEach((r) => { r.onchange = () => { $('#im_go').disabled = true; $('#im_msg').innerHTML = ''; }; });
+  $('#im_go').onclick = async () => {
+    if (!confirm((document.querySelector('[name=im_mode]:checked') || {}).value === 'stock' ? 'Import items AND set the stock of the selected shop from this file now?' : 'Import the items (codes, names, cost, price) now? Stock is not changed.')) return;
+    try { const j = await post(false); if (j.error) { show(j); return; } $('#im_go').disabled = true; $('#im_msg').innerHTML = `<div class="card" style="border-left:5px solid #15803d;margin-top:8px"><b>✓ Imported.</b> ${j.rows} row(s), ${j.new_items} new item(s), ${j.items_only ? 'stock not changed. Next: Stock take (team) to count the shelves.' : j.stock_changes + ' stock change(s). Check them under Stock.'}</div>`; } catch (e) { msg($('#im_msg'), niceErr(e)); }
+  };
+  $('#im_tpl').onclick = () => downloadCsv('flexc-stock-template.csv', [['Code', 'Name', 'Barcode', 'Category', 'Unit', 'Cost', 'Price', 'VAT', 'Qty', 'Reorder', 'Name_AR'], ['RICE5', 'Basmati Rice 5kg', '6290000000011', 'Grocery', 'pc', 22, 31.5, 5, 40, 5, 'أرز بسمتي 5 كجم'], ['SUGAR1', 'Sugar 1kg', '6290000000028', 'Grocery', 'pc', 3.2, 4.75, 5, 80, 10, '']]);
+}
+
+async function tBackup() {
+  const sets = [['items', 'Items and barcodes'], ['stock', 'Stock on hand'], ['sales', 'Sales (every bill line)'], ['purchases', 'Purchases'], ['supplier_returns', 'Returns to suppliers'], ['suppliers', 'Suppliers and balances'], ['expenses', 'Expenses'], ['customers', 'Customers']];
+  view().innerHTML = `<div class="card"><h3>Backup and export</h3><div class="hint">Download your records as spreadsheet files (CSV opens in Excel) or as one backup file. Sales, purchases, returns and expenses use the dates below. Keep a copy somewhere safe, for example once a month.</div>
+    <div class="row"><div><label>From</label><input id="b_from" type="date" value="${today().slice(0, 4)}-01-01"></div><div><label>To</label><input id="b_to" type="date" value="${today()}"></div></div>
+    <div class="grid g2" style="margin-top:10px">${sets.map(([k, l]) => `<div class="row" style="align-items:center"><div style="flex:1">${l}</div><div class="fit"><button class="btn sec" data-ex="${k}" data-ic="download">CSV</button></div></div>`).join('')}</div>
+    <div class="row" style="margin-top:12px"><div class="fit"><button class="btn" id="b_all" data-ic="download">Full backup file (JSON)</button></div></div><div id="b_msg"></div>
+    <div class="hint" style="margin-top:8px">This exports your business records. The complete database backup (every setting and user) is also kept by your hosting: in hPanel open Backups and download a copy there too.</div></div>`;
+  const get = (k) => api('export', { params: { company_id: CO, what: k, from: $('#b_from').value, to: $('#b_to').value } });
+  const stamp = today();
+  view().onclick = async (e) => {
+    const b = e.target.closest('[data-ex]'); if (!b) return;
+    try { const r = await get(b.dataset.ex); const cols = r.rows.length ? Object.keys(r.rows[0]) : []; downloadCsv(`flexc-${b.dataset.ex}-${stamp}.csv`, [cols].concat(r.rows.map((x) => cols.map((c) => x[c])))); msg($('#b_msg'), `${r.rows.length} row(s) downloaded.`, true); } catch (er) { msg($('#b_msg'), niceErr(er)); }
+  };
+  $('#b_all').onclick = async () => {
+    try {
+      const out = { app: 'Flex-C', exported_at: new Date().toISOString(), company_id: CO, from: $('#b_from').value, to: $('#b_to').value };
+      for (const [k] of sets) out[k] = (await get(k)).rows;
+      const blob = new Blob([JSON.stringify(out)], { type: 'application/json' }); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `flexc-backup-${stamp}.json`; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 1500);
+      msg($('#b_msg'), 'Backup file downloaded.', true);
+    } catch (er) { msg($('#b_msg'), niceErr(er)); }
+  };
+}
+
+/* ---------------- Checks: proof that stock and accounts tally ---------------- */
+async function tChecks() {
+  view().innerHTML = `<div class="card"><h3>Stock and accounts checks</h3><div class="hint">Re-adds every purchase, sale, payment and stock movement and shows anything that does not agree. Nothing is changed.</div>
+    <div class="row"><div><label>From</label><input id="k_from" type="date" value="${monthStart()}"></div><div><label>To</label><input id="k_to" type="date" value="${today()}"></div>
+    <div class="fit"><label>&nbsp;</label><button class="btn" id="k_go">Run checks</button></div><div class="fit"><label>&nbsp;</label><button class="btn sec" id="k_pdf" data-ic="print">Print proof</button></div></div></div><div id="k_body"></div>`;
+  let data = null;
+  const run = async () => {
+    $('#k_body').innerHTML = '<div class="card">Checking...</div>';
+    data = await api('reconcile', { params: { company_id: CO, from: $('#k_from').value, to: $('#k_to').value } });
+    const html = data.checks.map((c) => { const bad = c.issues.length, soft = ['proof', 'delivery', 'stockin'].includes(c.key);
+      return `<div class="card"><div class="row"><b style="flex:1">${bad ? (soft ? '⚠' : '✗') : '✓'} ${esc(c.title)}</b><span class="tag ${bad ? (soft ? 'warn' : 'bad') : 'ok'}">${bad ? bad + ' to look at' : 'all ' + c.checked + ' agree'}</span></div>
+      <div class="hint">${esc(c.how)} · ${c.checked} checked</div>${bad ? '<ul style="margin:6px 0 0;padding-left:18px">' + c.issues.slice(0, 50).map((t) => `<li>${esc(t)}</li>`).join('') + (bad > 50 ? `<li>... and ${bad - 50} more</li>` : '') + '</ul>' : ''}</div>`; }).join('');
+    $('#k_body').innerHTML = `<div class="card" style="border-left:5px solid ${data.errors ? '#b91c1c' : '#15803d'}"><b style="font-size:18px">${data.errors ? '✗ ' + data.errors + ' difference(s) found' : '✓ Everything tallies'}</b><div class="hint">${esc(data.from)} to ${esc(data.to)}</div></div>` + html;
+    hydrateIcons(view());
+  };
+  $('#k_go').onclick = () => run().catch((e) => { $('#k_body').innerHTML = `<div class="card err">${esc(niceErr(e))}</div>`; });
+  $('#k_pdf').onclick = () => { if (!data) return; printHtml(`<div class="a4"><h1>Stock and accounts checks</h1><div class="muted">${esc(data.from)} to ${esc(data.to)} · run ${esc(data.run_at)}</div>
+    <h2>${data.errors ? data.errors + ' difference(s) found' : 'Everything tallies'}</h2>${data.checks.map((c) => `<div style="margin:8px 0"><b>${c.issues.length ? '✗' : '✓'} ${esc(c.title)}</b> - ${c.checked} checked<div class="muted">${esc(c.how)}</div>${c.issues.map((t) => `<div>• ${esc(t)}</div>`).join('')}</div>`).join('')}<div class="foot">Powered by Adnys</div></div>`); };
+  await run().catch(() => {});
+}
+
+/* ---------------- Suppliers & payments ---------------- */
+async function tSuppliers() {
+  const sups = (await api('suppliers_list', { params: { company_id: CO } })).suppliers;
+  const opts = sups.map((s) => `<option value="${s.id}">${esc(s.name)}</option>`).join('');
+  const office = isOffice();
+  const EMIRATES = ['Abu Dhabi', 'Dubai', 'Sharjah', 'Ajman', 'Umm Al Quwain', 'Ras Al Khaimah', 'Fujairah', 'Outside UAE'];
+  const trnTag = (s) => !s.trn ? '<span class="tag">no TRN</span>' : s.trn_verified_at ? `<span class="tag ok" title="Checked on the FTA site by ${esc(s.trn_verified_by_name || '')} on ${esc(String(s.trn_verified_at).slice(0, 10))}${s.trn_legal_name ? ': ' + esc(s.trn_legal_name) : ''}">✓ verified</span>` : '<span class="tag warn">not verified</span>';
+  view().innerHTML = `<div class="card"><h3>Suppliers</h3><div class="row"><div><input id="su_q" type="search" placeholder="Find supplier: name, phone, TRN, contact, emirate" autocomplete="off"></div><div class="fit hint" id="su_n"></div>${office ? '<div class="fit"><button class="btn" id="su_new">+ New supplier</button></div>' : ''}</div>
+    <div class="tbl"><table id="su_tb"><tr><th>Supplier</th><th>TRN</th><th>Phone</th><th class="r">Opening</th><th class="r">Billed</th><th class="r">Returned</th><th class="r">Paid</th><th class="r">Owed</th>${office ? '<th></th>' : ''}</tr>
+    ${sups.map((s) => `<tr><td><b>${esc(s.name)}</b>${s.contact_name || s.emirate ? `<div class="hint">${esc([s.contact_name, s.emirate].filter(Boolean).join(' · '))}</div>` : ''}</td><td>${esc(s.trn || '')} ${trnTag(s)}</td><td>${esc(s.phone || '')}</td><td class="r">${money(s.opening_balance)}</td><td class="r">${money(s.billed)}</td><td class="r">${money(s.returned)}</td><td class="r">${money(s.paid)}</td><td class="r ${s.balance > 0.005 ? 'warn' : ''}"><b>${money(s.balance)}</b></td>${office ? `<td><button class="btn sec" data-se="${s.id}">Edit</button></td>` : ''}</tr>`).join('')}</table></div></div>
+    ${office ? `<div class="card" id="se_card"><h3 id="se_h">New supplier</h3><form id="se_f"><input type="hidden" id="se_id">
+      <div class="grid g3">
+        <div><label>Supplier name (as on the bill) *</label><input id="se_name" required maxlength="150"></div>
+        <div><label>Contact person</label><input id="se_contact" maxlength="120"></div>
+        <div><label>Phone / WhatsApp</label><input id="se_ph" maxlength="40" inputmode="tel"></div>
+        <div><label>Email</label><input id="se_email" type="email" maxlength="190"></div>
+        <div><label>Emirate</label><select id="se_em"><option value="">-</option>${EMIRATES.map((x) => `<option>${x}</option>`).join('')}</select></div>
+        <div><label>P.O. Box</label><input id="se_po" maxlength="20"></div>
+        <div style="grid-column:1/-1"><label>Address (building, street, area)</label><input id="se_addr" maxlength="255"></div>
+        <div><label>Opening balance owed (AED)</label><input id="se_open" type="number" step="0.01" value="0"></div>
+        <div style="grid-column:span 2"><label>Notes</label><input id="se_notes" maxlength="255" placeholder="e.g. delivers on Mondays, credit 30 days"></div>
+      </div>
+      <div class="card" style="margin:12px 0 0;box-shadow:none;border:1px solid var(--line)"><b>TRN (VAT registration)</b>
+        <div class="row" style="margin-top:6px"><div><label>TRN, 15 digits</label><input id="se_trn" maxlength="20" inputmode="numeric" placeholder="100xxxxxxxxxxxx"></div><div class="fit" id="se_trnok" style="min-width:170px;padding-bottom:10px"></div>
+          <div class="fit"><button type="button" class="btn sec" id="se_fta">Check on FTA site ↗</button></div></div>
+        <div class="hint">The FTA checks TRNs on EmaraTax (TRN Verification, with a security code), so Flex-C opens it for you and copies the TRN: paste it, type the code, and compare the legal name with the supplier bill. Then tick below.</div>
+        <div class="row" style="margin-top:6px"><div class="fit" style="padding-bottom:10px"><label style="margin:0"><input type="checkbox" id="se_ver" style="width:auto"> I checked this TRN on the FTA site</label></div><div><label>Legal name shown by the FTA</label><input id="se_legal" maxlength="190" placeholder="exactly as shown"></div></div>
+        <div class="hint" id="se_verinfo"></div></div>
+      <div class="row" style="margin-top:10px"><div class="fit"><button class="btn" id="se_save">Save supplier</button></div><div class="fit"><button type="button" class="btn sec" id="se_clear">Clear</button></div></div><div id="se_msg"></div></form></div>
+    <div class="card"><h3>Record a payment</h3><form id="y_f"><div class="grid g3">
+      <div><label>Supplier</label><select id="y_sup" required>${opts}</select></div>
+      <div><label>Amount (AED)</label><input id="y_amt" type="number" step="0.01" min="0.01" required></div>
+      <div><label>Method</label><select id="y_m"><option>cash</option><option>bank</option><option>cheque</option><option>card</option></select></div>
+      <div><label>Date</label><input id="y_d" type="date" value="${today()}"></div>
+      <div style="grid-column:span 2"><label>Note</label><input id="y_n" maxlength="255"></div></div>
+      <div style="margin-top:10px"><button class="btn">Save payment</button></div><div id="y_msg"></div></form></div>`
+      : `<div class="card"><span class="tag warn">View only</span> <span class="hint">Supplier payments and supplier details are for owners, managers and accountants.</span></div>`}`;
+  const supFilter = () => {
+    const q = $('#su_q').value.trim().toLowerCase(); let n = 0, owed = 0;
+    [...$('#su_tb').rows].slice(1).forEach((tr, k) => { const sp = sups[k]; if (!sp) return; const hit = !q || [sp.name, sp.phone, sp.trn, sp.contact_name, sp.emirate, sp.email, sp.address].some((v) => String(v || '').toLowerCase().includes(q)); tr.style.display = hit ? '' : 'none'; if (hit) { n++; owed += +sp.balance || 0; } });
+    $('#su_n').innerHTML = `${n} supplier(s) · owed <b>${money(owed)}</b>`;
+  };
+  $('#su_q').oninput = supFilter; supFilter(); $('#su_q').focus();
+  if (!office) return;
+  findSelect('y_sup');
+  const trnCheck = () => {
+    const t = $('#se_trn').value.replace(/[\s-]+/g, '');
+    $('#se_trnok').innerHTML = !t ? '<span class="hint">optional</span>' : /^100\d{12}$/.test(t) ? '<span style="color:#15803d;font-weight:700">✓ valid format</span>' : `<span style="color:#b91c1c;font-weight:700">✗ ${t.length} digits; a UAE TRN is 15 digits starting with 100</span>`;
+    $('#se_ver').disabled = !/^100\d{12}$/.test(t); if ($('#se_ver').disabled) $('#se_ver').checked = false;
+  };
+  $('#se_trn').oninput = trnCheck;
+  $('#se_fta').onclick = () => { const t = $('#se_trn').value.replace(/[\s-]+/g, ''); try { if (t && navigator.clipboard) navigator.clipboard.writeText(t).catch(() => {}); } catch (e) { /* ignore */ } window.open('https://eservices.tax.gov.ae', '_blank', 'noopener'); };
+  const fill = (s) => {
+    s = s || {};
+    $('#se_h').textContent = s.id ? 'Edit supplier: ' + s.name : 'New supplier';
+    $('#se_id').value = s.id || ''; $('#se_name').value = s.name || ''; $('#se_contact').value = s.contact_name || ''; $('#se_ph').value = s.phone || ''; $('#se_email').value = s.email || '';
+    $('#se_em').value = s.emirate || ''; $('#se_po').value = s.po_box || ''; $('#se_addr').value = s.address || ''; $('#se_open').value = s.opening_balance ?? 0; $('#se_notes').value = s.notes || '';
+    $('#se_trn').value = s.trn || ''; $('#se_ver').checked = !!s.trn_verified_at; $('#se_legal').value = s.trn_legal_name || '';
+    $('#se_verinfo').innerHTML = s.trn_verified_at ? `Verified by <b>${esc(s.trn_verified_by_name || '')}</b> on ${esc(String(s.trn_verified_at).slice(0, 16))}. Changing the TRN or legal name needs a new check.` : '';
+    trnCheck(); $('#se_msg').textContent = '';
+  };
+  fill();
+  $('#su_new').onclick = () => { fill(); $('#se_card').scrollIntoView({ behavior: 'smooth' }); $('#se_name').focus(); };
+  $('#se_clear').onclick = () => fill();
+  $('#su_tb').onclick = (e) => { const b = e.target.closest('[data-se]'); if (!b) return; fill(sups.find((x) => x.id === +b.dataset.se)); $('#se_card').scrollIntoView({ behavior: 'smooth' }); };
+  $('#se_f').onsubmit = async (e) => {
+    e.preventDefault();
+    if ($('#se_ver').checked && !$('#se_legal').value.trim()) { msg($('#se_msg'), 'Type the legal name the FTA shows, so the check is on record.'); return; }
+    try {
+      await api('suppliers_save', { body: { company_id: CO, id: +$('#se_id').value || 0, name: $('#se_name').value, contact_name: $('#se_contact').value, phone: $('#se_ph').value, email: $('#se_email').value,
+        emirate: $('#se_em').value, po_box: $('#se_po').value, address: $('#se_addr').value, opening_balance: $('#se_open').value, notes: $('#se_notes').value,
+        trn: $('#se_trn').value, trn_verified: $('#se_ver').checked, trn_legal_name: $('#se_legal').value } });
+      await tSuppliers(); msg($('#su_n'), 'Supplier saved.', true);
+    } catch (err) { msg($('#se_msg'), niceErr(err)); }
+  };
+  $('#y_f').onsubmit = async (e) => {
+    e.preventDefault();
+    try { await api('supplier_payment_save', { body: { company_id: CO, supplier_id: +$('#y_sup').value, amount: $('#y_amt').value, method: $('#y_m').value, paid_at: $('#y_d').value, note: $('#y_n').value } }); await tSuppliers(); msg($('#su_n'), 'Payment saved.', true); }
+    catch (err) { msg($('#y_msg'), niceErr(err)); }
+  };
+}
+
+/* ---------------- Expenses ---------------- */
+async function tExpenses() {
+  view().innerHTML = `<div class="card"><h3 id="x_h">Add expense</h3><form id="x_f"><input type="hidden" id="x_id"><div class="grid g3">
+    <div><label>Category *</label><input id="x_cat" list="x_cats" required maxlength="60"><datalist id="x_cats"><option>Rent</option><option>Salaries</option><option>Electricity & water</option><option>Transport</option><option>Licence & government fees</option><option>Repairs</option><option>Other</option></datalist></div>
+    <div><label>Amount incl. VAT *</label><input id="x_amt" type="number" step="0.01" min="0.01" required></div>
+    <div><label>VAT part</label><input id="x_vat" type="number" step="0.01" min="0" value="0"></div>
+    <div><label>Date</label><input id="x_d" type="date" value="${today()}"></div>
+    <div><label>Shop (optional)</label><select id="x_shop">${shopOpts(true)}</select></div>
+    <div><label>Note</label><input id="x_n" maxlength="255"></div></div>
+    <div class="row" style="margin-top:10px"><div class="fit"><button class="btn">Save expense</button></div><div class="fit"><button class="btn sec" type="button" id="x_cancel" style="display:none">Cancel edit</button></div></div><div id="x_msg"></div></form></div>
+    <div class="card"><h3>This month <span id="x_tot" style="float:right"></span></h3><div class="tbl"><table id="x_tb"></table></div></div>`;
+  $('#x_f').onsubmit = async (e) => {
+    e.preventDefault();
+    try { await api('expense_save', { body: { id: $('#x_id').value || undefined, company_id: CO, shop_id: $('#x_shop').value || null, category: $('#x_cat').value, amount: $('#x_amt').value, vat_amount: $('#x_vat').value, expense_date: $('#x_d').value, note: $('#x_n').value } }); await tExpenses(); msg($('#x_msg'), 'Saved.', true); }
+    catch (err) { msg($('#x_msg'), niceErr(err)); }
+  };
+  const r = await api('expenses_list', { params: { company_id: CO } });
+  const isOwner = S.user.role === 'owner';
+  $('#x_tot').textContent = 'AED ' + money(r.total);
+  $('#x_tb').innerHTML = `<tr><th>Date</th><th>Category</th><th>Shop</th><th>Note</th><th class="r">Amount</th>${isOwner ? '<th></th>' : ''}</tr>` +
+    r.expenses.map((x) => `<tr><td>${esc(x.expense_date)}</td><td>${esc(x.category)}</td><td>${esc(x.shop || 'All')}</td><td>${esc(x.note || '')}</td><td class="r">${money(x.amount)}</td>${isOwner ? `<td class="hold-actions"><button class="btn sec" data-xe="${x.id}">Edit</button><button class="btn sec" data-xd="${x.id}">Delete</button></td>` : ''}</tr>`).join('');
+  const resetForm = () => { $('#x_f').reset(); $('#x_id').value = ''; $('#x_h').textContent = 'Add expense'; $('#x_cancel').style.display = 'none'; $('#x_d').value = today(); };
+  $('#x_cancel').onclick = resetForm;
+  $('#x_tb').onclick = async (e) => {
+    const ed = e.target.closest('[data-xe]'), dl = e.target.closest('[data-xd]');
+    if (ed) {
+      const x = r.expenses.find((v) => v.id == ed.dataset.xe);
+      $('#x_id').value = x.id; $('#x_cat').value = x.category; $('#x_amt').value = x.amount; $('#x_vat').value = x.vat_amount; $('#x_d').value = x.expense_date; $('#x_shop').value = x.shop_id || ''; $('#x_n').value = x.note || '';
+      $('#x_h').textContent = 'Edit expense'; $('#x_cancel').style.display = ''; scrollTo({ top: 0, behavior: 'smooth' });
+    }
+    if (dl) {
+      const x = r.expenses.find((v) => v.id == dl.dataset.xd);
+      if (!confirm(`Delete this expense?\n${x.expense_date}  ${x.category}  AED ${money(x.amount)}\nIt stays in the audit log.`)) return;
+      try { await api('expense_delete', { body: { id: x.id } }); await tExpenses(); } catch (err) { alert(niceErr(err)); }
+    }
+  };
+}
+
+/* ---------------- Returns ---------------- */
+async function tReturns() {
+  view().innerHTML = `<div class="card"><div class="row"><div><label>From</label><input id="r_from" type="date" value="${monthStart()}"></div>
+    <div><label>To</label><input id="r_to" type="date" value="${today()}"></div>
+    <div class="fit"><label>&nbsp;</label><button class="btn" id="r_go">Show</button></div>
+    <div class="fit"><label>&nbsp;</label><button class="btn sec" id="r_csv" data-ic="download">CSV</button></div>
+    <div class="fit"><label>&nbsp;</label><button class="btn sec" id="r_pdf" data-ic="pdf">PDF</button></div></div>
+    <div class="hint">Every return shows who approved it and whether the approval was online or offline.</div>
+    <div class="hint" id="r_sum"></div><div class="tbl"><table id="r_tb"></table></div></div>`;
+  let rows = [];
+  const load = async () => {
+    const r = await api('returns_list', { params: { company_id: CO, from: $('#r_from').value, to: $('#r_to').value } });
+    rows = r.returns;
+    $('#r_sum').textContent = `${rows.length} return(s) · total ${money(r.total)}`;
+    $('#r_tb').innerHTML = `<tr><th>When</th><th>Invoice</th><th>Shop</th><th>Cashier</th><th>Authorised by</th><th>Approval</th><th>Customer</th><th class="r">Total</th></tr>` +
+      rows.map((x) => `<tr><td>${esc(x.sold_at.slice(0, 16))}</td><td>${esc(x.invoice_no)}</td><td>${esc(x.shop)} (${esc(x.register)})</td><td>${esc(x.cashier)}</td>
+        <td>${esc(x.authorised_name || '—')}${x.authorised_username ? `<div class="hint">${esc(x.authorised_username)} · ${esc(x.authorised_role || '')}</div>` : ''}</td>
+        <td><span class="tag ${x.auth_ref === 'offline' ? 'warn' : 'ok'}">${esc(x.auth_ref || '—')}</span></td><td>${esc(x.customer_name || '')}</td><td class="r neg">${money(x.total)}</td></tr>`).join('') || '<tr><td colspan="8">No returns in this range.</td></tr>';
+  };
+  $('#r_go').onclick = load; $('#r_from').onchange = load; $('#r_to').onchange = load;
+  $('#r_csv').onclick = () => downloadCsv(`returns-${$('#r_from').value}-${$('#r_to').value}.csv`, [['When', 'Invoice', 'Shop', 'Register', 'Cashier', 'Authorised by', 'Username', 'Role', 'Approval', 'Customer', 'Total']].concat(rows.map((x) => [x.sold_at, x.invoice_no, x.shop, x.register, x.cashier, x.authorised_name || '', x.authorised_username || '', x.authorised_role || '', x.auth_ref || '', x.customer_name || '', x.total])));
+  $('#r_pdf').onclick = () => printHtml(`<div class="a4"><h1>Sales returns</h1><div class="muted">${esc($('#r_from').value)} to ${esc($('#r_to').value)}</div>
+    <table><thead><tr><th>When</th><th>Invoice</th><th>Shop</th><th>Cashier</th><th>Authorised by</th><th>Approval</th><th class="r">Total</th></tr></thead><tbody>${rows.map((x) => `<tr><td>${esc(x.sold_at)}</td><td>${esc(x.invoice_no)}</td><td>${esc(x.shop)}</td><td>${esc(x.cashier)}</td><td>${esc(x.authorised_name || '')}</td><td>${esc(x.auth_ref || '')}</td><td class="r">${money(x.total)}</td></tr>`).join('') || '<tr><td colspan="7">No returns.</td></tr>'}</tbody></table>
+    <div class="foot">Powered by Adnys</div></div>`);
+  await load();
+}
+
+/* ---------------- Reports ---------------- */
+async function tReports() {
+  const st = await settings();
+  view().innerHTML = `<div class="card"><div class="row"><div><label>From</label><input id="q_from" type="date" value="${monthStart()}"></div>
+    <div><label>To</label><input id="q_to" type="date" value="${today()}"></div>
+    <div class="fit"><label>&nbsp;</label><button class="btn" id="q_go">Show</button></div>
+    <div class="fit"><label>&nbsp;</label><button class="btn sec" id="q_csv" data-ic="download">CSV / Excel</button></div>
+    <div class="fit"><label>&nbsp;</label><button class="btn sec" id="q_pdf" data-ic="pdf">PDF</button></div>
+    <div class="fit"><label>&nbsp;</label><button class="btn sec" id="q_share" data-ic="share">Share</button></div>
+    <div class="fit"><label>&nbsp;</label><button class="btn sec" id="q_wa" data-ic="whatsapp" style="background:#16a34a;color:#fff">WhatsApp</button></div>
+    <div class="fit"><label>&nbsp;</label><button class="btn sec" id="q_mail" data-ic="mail">Email</button></div></div></div>
+    <div id="q_body"></div>`;
+  let data = null;
+  const load = async () => {
+    data = await api('sales_report', { params: { company_id: CO, from: $('#q_from').value, to: $('#q_to').value } });
+    const t = data.totals;
+    $('#q_body').innerHTML = `<div class="grid g4" style="margin-bottom:12px">
+      ${[['Sales', money(t.sales_total)], ['Bills', t.txn_count], ['VAT', money(t.vat_total)], ['Profit', money(t.profit)], ['Returns', money(t.returns_total)], ['Expenses', money(t.expenses)], ['Net after expenses', money(t.net_after_expenses)], ['Cash / card', money(t.cash_total) + ' / ' + money(t.card_total)]]
+        .map(([l, v]) => `<div class="kpi"><div class="l">${l}</div><div class="v">${v}</div></div>`).join('')}</div>
+      <div class="card"><h3>By shop</h3><div class="tbl"><table><tr><th>Shop</th><th class="r">Bills</th><th class="r">Sales</th><th class="r">VAT</th><th class="r">Net</th><th class="r">Cost</th><th class="r">Profit</th><th class="r">Returns</th><th class="r">Expenses</th></tr>
+        ${data.shops.map((s) => `<tr><td>${esc(s.shop)}<div class="hint">${esc(s.code)}${s.group_code ? ' · group ' + esc(s.group_code) : ''}</div></td><td class="r">${s.txn_count}</td><td class="r">${money(s.sales_total)}</td><td class="r">${money(s.vat_total)}</td><td class="r">${money(s.net_total)}</td><td class="r">${money(s.cogs)}</td><td class="r ${s.profit < 0 ? 'neg' : 'pos'}">${money(s.profit)}</td><td class="r">${money(s.returns_total)}</td><td class="r">${money(s.expenses)}</td></tr>`).join('') || '<tr><td colspan="9">No shops.</td></tr>'}</table></div></div>
+      <div class="card"><h3>By day</h3><div class="tbl"><table><tr><th>Day</th><th class="r">Bills</th><th class="r">Sales</th><th class="r">VAT</th><th class="r">Net</th><th class="r">Cost</th><th class="r">Cash</th><th class="r">Card</th><th class="r">Other</th></tr>
+        ${data.days.map((d) => `<tr><td>${esc(d.day)}</td><td class="r">${d.txn_count}</td><td class="r">${money(d.sales_total)}</td><td class="r">${money(d.vat_total)}</td><td class="r">${money(d.net_total)}</td><td class="r">${money(d.cogs)}</td><td class="r">${money(d.cash_total)}</td><td class="r">${money(d.card_total)}</td><td class="r">${money(d.other_total)}</td></tr>`).join('') || '<tr><td colspan="9">No sales.</td></tr>'}</table></div></div>`;
+  };
+  const text = () => {
+    const t = data.totals;
+    return `Flex-C sales report ${data.from} to ${data.to}\nSales: ${money(t.sales_total)} (${t.txn_count} bills)\nVAT: ${money(t.vat_total)}\nProfit: ${money(t.profit)}\nReturns: ${money(t.returns_total)}\nExpenses: ${money(t.expenses)}\nNet after expenses: ${money(t.net_after_expenses)}`;
+  };
+  $('#q_go').onclick = load; $('#q_from').onchange = load; $('#q_to').onchange = load;
+  $('#q_csv').onclick = () => {
+    if (!data) return;
+    const rows = [['Shop', 'Code', 'Group', 'Bills', 'Sales', 'VAT', 'Net', 'Cost', 'Profit', 'Cash', 'Card', 'Other', 'Returns', 'Expenses']]
+      .concat(data.shops.map((s) => [s.shop, s.code, s.group_code || '', s.txn_count, s.sales_total, s.vat_total, s.net_total, s.cogs, s.profit, s.cash_total, s.card_total, s.other_total, s.returns_total, s.expenses]));
+    rows.push([]); rows.push(['Day', 'Bills', 'Sales', 'VAT', 'Net', 'Cost', 'Cash', 'Card', 'Other']);
+    data.days.forEach((d) => rows.push([d.day, d.txn_count, d.sales_total, d.vat_total, d.net_total, d.cogs, d.cash_total, d.card_total, d.other_total]));
+    downloadCsv(`sales-report-${data.from}-${data.to}.csv`, rows);
+  };
+  $('#q_pdf').onclick = () => {
+    if (!data) return;
+    const t = data.totals;
+    printHtml(`<div class="a4"><h1>Sales report</h1><div class="muted">${esc(data.from)} to ${esc(data.to)}</div>
+      <table><tbody><tr><td>Sales</td><td class="r">${money(t.sales_total)}</td><td>Bills</td><td class="r">${t.txn_count}</td></tr>
+      <tr><td>VAT</td><td class="r">${money(t.vat_total)}</td><td>Profit</td><td class="r">${money(t.profit)}</td></tr>
+      <tr><td>Returns</td><td class="r">${money(t.returns_total)}</td><td>Expenses</td><td class="r">${money(t.expenses)}</td></tr>
+      <tr><td>Net after expenses</td><td class="r"><b>${money(t.net_after_expenses)}</b></td><td></td><td></td></tr></tbody></table>
+      <table><thead><tr><th>Shop</th><th class="r">Bills</th><th class="r">Sales</th><th class="r">VAT</th><th class="r">Profit</th><th class="r">Returns</th></tr></thead><tbody>${data.shops.map((s) => `<tr><td>${esc(s.shop)} (${esc(s.code)})</td><td class="r">${s.txn_count}</td><td class="r">${money(s.sales_total)}</td><td class="r">${money(s.vat_total)}</td><td class="r">${money(s.profit)}</td><td class="r">${money(s.returns_total)}</td></tr>`).join('')}</tbody></table>
+      <div class="foot">Powered by Adnys</div></div>`);
+  };
+  $('#q_share').onclick = () => { if (data) shareText('Sales report', text()); };
+  $('#q_wa').onclick = () => { if (!data) return; const num = (st.share_whatsapp ? String(st.share_whatsapp).replace(/[^0-9]/g, '') : ''); window.open('https://wa.me/' + num + '?text=' + encodeURIComponent(text()), '_blank'); };
+  $('#q_mail').onclick = () => { if (!data) return; location.href = 'mailto:' + encodeURIComponent(st.share_email || '') + '?subject=' + encodeURIComponent('Sales report') + '&body=' + encodeURIComponent(text()); };
+  await load();
+}
+
+/* ---------------- Cash-ups ---------------- */
+async function tClosings() {
+  view().innerHTML = `<div class="card"><div class="row"><div><label>From</label><input id="c_from" type="date" value="${monthStart()}"></div>
+    <div><label>To</label><input id="c_to" type="date" value="${today()}"></div>
+    <div class="fit"><label>&nbsp;</label><button class="btn" id="c_go">Show</button></div>
+    <div class="fit"><label>&nbsp;</label><button class="btn sec" id="c_csv" data-ic="download">CSV</button></div>
+    <div class="fit"><label>&nbsp;</label><button class="btn sec" id="c_pdf" data-ic="pdf">PDF</button></div></div>
+    <div class="hint" id="c_sum"></div><div class="tbl"><table id="c_tb"></table></div></div>`;
+  let data = null;
+  const load = async () => {
+    data = await api('closings_list', { params: { company_id: CO, from: $('#c_from').value, to: $('#c_to').value } });
+    const t = data.totals;
+    $('#c_sum').textContent = `${data.closings.length} cash-up(s) · sales ${money(t.net_sales)} · cash ${money(t.cash_sales)} · difference ${money(t.difference)}`;
+    $('#c_tb').innerHTML = `<tr><th>Date</th><th>Shop / register</th><th class="r">Bills</th><th class="r">Sales</th><th class="r">Returns</th><th class="r">Cash</th><th class="r">Card</th><th class="r">Bank</th><th class="r">Other</th><th class="r">VAT</th><th class="r">Expected</th><th class="r">Counted</th><th class="r">Difference</th><th>Closed by</th></tr>` +
+      data.closings.map((c) => `<tr><td>${esc(c.close_date)}</td><td>${esc(c.shop)} (${esc(c.register)})</td><td class="r">${c.txn_count}</td><td class="r">${money(c.net_sales)}</td><td class="r">${money(c.returns_total)}</td><td class="r">${money(c.cash_sales)}</td><td class="r">${money(c.card_sales)}</td><td class="r">${money(c.bank_sales)}</td><td class="r">${money(c.other_sales)}</td><td class="r">${money(c.vat_total)}</td><td class="r">${money(c.expected_cash)}</td><td class="r">${money(c.counted_cash)}</td><td class="r ${Math.abs(c.difference) > 0.005 ? 'neg' : 'pos'}">${money(c.difference)}</td><td>${esc(c.closed_by_name || '')}</td></tr>`).join('') || '<tr><td colspan="14">No cash-ups in this range.</td></tr>';
+  };
+  $('#c_go').onclick = load; $('#c_from').onchange = load; $('#c_to').onchange = load;
+  $('#c_csv').onclick = () => {
+    if (!data) return;
+    downloadCsv(`cashups-${$('#c_from').value}-${$('#c_to').value}.csv`, [['Date', 'Shop', 'Code', 'Register', 'Bills', 'Sales', 'Returns', 'Cash', 'Card', 'Bank', 'Other', 'VAT', 'Expected cash', 'Counted cash', 'Difference', 'Closed by']]
+      .concat(data.closings.map((c) => [c.close_date, c.shop, c.shop_code, c.register, c.txn_count, c.net_sales, c.returns_total, c.cash_sales, c.card_sales, c.bank_sales, c.other_sales, c.vat_total, c.expected_cash, c.counted_cash, c.difference, c.closed_by_name || ''])));
+  };
+  $('#c_pdf').onclick = () => {
+    if (!data) return;
+    printHtml(`<div class="a4"><h1>Cash-up / Z reports</h1><div class="muted">${esc(data.from)} to ${esc(data.to)}</div>
+      <table><thead><tr><th>Date</th><th>Shop</th><th class="r">Sales</th><th class="r">Cash</th><th class="r">Card</th><th class="r">Expected</th><th class="r">Counted</th><th class="r">Difference</th></tr></thead><tbody>
+      ${data.closings.map((c) => `<tr><td>${esc(c.close_date)}</td><td>${esc(c.shop)} (${esc(c.register)})</td><td class="r">${money(c.net_sales)}</td><td class="r">${money(c.cash_sales)}</td><td class="r">${money(c.card_sales)}</td><td class="r">${money(c.expected_cash)}</td><td class="r">${money(c.counted_cash)}</td><td class="r">${money(c.difference)}</td></tr>`).join('') || '<tr><td colspan="8">No cash-ups.</td></tr>'}</tbody></table>
+      <div class="foot">Powered by Adnys</div></div>`);
+  };
+  await load();
+}
+
+/* ---------------- Notifications / alerts ---------------- */
+async function tNotifications() {
+  view().innerHTML = `<div class="card"><div class="row"><div><label>Show</label><select id="n_f"><option value="open">Open alerts</option><option value="new">New only</option><option value="resolved">Resolved</option><option value="">All</option></select></div>
+    <div class="fit"><label>&nbsp;</label><button class="btn sec" id="n_go">Refresh</button></div><div class="fit" id="n_counts"></div></div>
+    <div class="hint">Low-stock alerts go to the owner, admin and purchase team. One alert per item and shop; it resolves when stock is replenished.</div>
+    <div class="tbl"><table id="n_tb"></table></div></div>`;
+  const load = async () => {
+    const r = await api('notifications_list', { params: { status: $('#n_f').value } });
+    const c = r.counts;
+    $('#n_counts').innerHTML = `<span class="tag bad">${c.new_count} new</span> <span class="tag warn">${c.open_count} open</span> <span class="tag">${c.low_count} low stock</span>`;
+    $('#n_tb').innerHTML = `<tr><th>When</th><th>Level</th><th>Alert</th><th>Shop</th><th class="r">Qty</th><th>Status</th><th></th></tr>` +
+      r.notifications.map((n) => `<tr><td>${esc(n.created_at.slice(0, 16))}</td><td><span class="tag ${tagLevel(n.level)}">${esc(n.level)}</span></td>
+        <td><b>${esc(n.title)}</b><div class="hint">${esc(n.detail || '')}</div></td><td>${esc(n.shop || '')}${n.shop_code ? ` (${esc(n.shop_code)})` : ''}</td>
+        <td class="r">${n.qty != null ? +n.qty : ''}</td><td><span class="tag ${n.status === 'resolved' ? 'ok' : n.status === 'new' ? 'bad' : 'warn'}">${esc(n.status)}</span></td>
+        <td class="hold-actions">${n.status === 'new' ? `<button class="btn sec" data-n="${n.id}" data-a="read">Mark read</button>` : ''}
+          ${n.status !== 'resolved' ? `<button class="btn sec" data-n="${n.id}" data-a="resolve">Resolve</button>` : `<button class="btn sec" data-n="${n.id}" data-a="reopen">Reopen</button>`}</td></tr>`).join('') || '<tr><td colspan="7">No alerts.</td></tr>';
+  };
+  $('#n_f').onchange = load; $('#n_go').onclick = load;
+  $('#n_tb').onclick = async (e) => {
+    const b = e.target.closest('[data-n]'); if (!b) return;
+    try { await api('notification_action', { body: { id: +b.dataset.n, action: b.dataset.a } }); await load(); }
+    catch (err) { alert(niceErr(err)); }
+  };
+  await load();
+}
+
+/* ---------------- Settings & logos ---------------- */
+async function tSettings() {
+  const d = await api('settings_get');
+  const st = d.settings;
+  const logoRow = (target, id, name, sub, logo) => `<div class="row" style="align-items:center;border-bottom:1px solid var(--line);padding:10px 0">
+    <div class="fit"><img id="lg_${target}_${id}" class="logoPrev" src="${logo ? esc(logo) : ''}" alt="" style="${logo ? '' : 'display:none'}"></div>
+    <div><b>${esc(name)}</b><div class="hint">${esc(sub)}</div></div>
+    <div style="max-width:230px"><input type="file" accept="image/*" data-logo="${target}" data-id="${id}"></div>
+    <div class="fit"><button class="btn sec" data-clear="${target}" data-id="${id}" data-name="${esc(name)}">Remove</button></div></div>`;
+  view().innerHTML = `<div class="card"><h3>Preferences</h3><form id="st_f"><div class="grid g3">
+      <div><label>Low-stock alert level (default 10)</label><input id="st_thr" type="number" step="0.001" min="0" value="${+st.low_stock_threshold}"></div>
+      <div><label>Currency</label><input id="st_cur" maxlength="8" value="${esc(st.currency || 'AED')}"></div>
+      <div><label>Share email</label><input id="st_email" type="email" maxlength="190" value="${esc(st.share_email || '')}"></div>
+      <div><label>WhatsApp number (with country code)</label><input id="st_wa" maxlength="40" value="${esc(st.share_whatsapp || '')}"></div>
+      <div><label>Receipt note</label><input id="st_note" maxlength="255" value="${esc(st.receipt_note || '')}"></div>
+      <div><label>Bill QR code</label><select id="st_qron"><option value="1"${st.qr_enabled === 0 ? '' : ' selected'}>On: print the verify QR on bills</option><option value="0"${st.qr_enabled === 0 ? ' selected' : ''}>Off: no QR on bills</option></select><div class="hint">Applies to receipts, A4 invoices, purchase bills and WhatsApp bills. Links on bills already printed keep working.</div></div>
+      <div><label>POS logo watermark opacity (%)</label><input id="st_wm" type="number" min="0" max="40" value="${st.watermark_opacity ?? 15}"><div class="hint">The company or shop logo shows faintly behind the item list. 0 = off. Default 15.</div></div>
+      <div><label>Thank-you message on bills</label><input id="st_thx" maxlength="255" placeholder="Thank you for shopping with us! / شكراً لتسوقكم معنا" value="${esc(st.thank_you || '')}"></div>
+      <div><label>Review / social link on bills (optional)</label><input id="st_qr" maxlength="255" placeholder="https://g.page/r/your-review-link" value="${esc(st.qr_url || '')}"><div class="hint">The bill QR always opens the invoice check page (seller, TRN, items, VAT rate, total). This link, if set, is printed under the thank-you as "Review us".</div></div>
+    </div><div style="margin-top:10px"><button class="btn">Save preferences</button></div><div id="st_msg"></div></form></div>
+    <div class="card"><h3>Company logos</h3><div class="hint">Shown at the top of receipts and A4 tax invoices.</div>
+      ${(d.companies || []).map((c) => logoRow('company', c.id, c.name, 'Company logo', c.logo)).join('') || '<p>No companies.</p>'}</div>
+    <div class="card"><h3>Shop logos and branch codes</h3><div class="hint">Branches of the same shop share a group code, so you can tell them apart in reports. <b>Need another shop or branch?</b> Adnys adds it for you (with its register and code): contact <a href="https://adnys.com" target="_blank" rel="noopener">Adnys</a>.</div>
+      ${(d.shops || []).map((s) => logoRow('shop', s.id, s.name, `Code ${s.code}${s.group_code ? ' · group ' + s.group_code : ''}`, s.logo)).join('') || '<p>No shops.</p>'}</div>`;
+  $('#st_f').onsubmit = async (e) => {
+    e.preventDefault();
+    try {
+      const r = await api('settings_save', { body: { low_stock_threshold: $('#st_thr').value, currency: $('#st_cur').value, share_email: $('#st_email').value, share_whatsapp: $('#st_wa').value, receipt_note: $('#st_note').value, thank_you: $('#st_thx').value, watermark_opacity: $('#st_wm').value, qr_enabled: +$('#st_qron').value, qr_url: $('#st_qr').value } });
+      SETTINGS = r.settings; S.settings = r.settings; sessionStorage.setItem('fc_settings', JSON.stringify(r.settings));
+      msg($('#st_msg'), 'Saved.', true);
+    } catch (err) { msg($('#st_msg'), niceErr(err)); }
+  };
+  view().onchange = async (e) => {
+    const f = e.target.closest('[data-logo]'); if (!f) return;
+    const file = f.files && f.files[0]; if (!file) return;
+    const target = f.dataset.logo, id = +f.dataset.id;
+    try {
+      const logo = await fileToLogo(file, target === 'company' ? 340 : 300);
+      await api('logo_save', { body: { target, id, logo } });
+      const img = $('#lg_' + target + '_' + id); img.src = logo; img.style.display = '';
+      alert('Logo saved. Registers show it after Refresh (or the next sign-in).');
+    } catch (err) { alert(niceErr(err)); }
+    f.value = '';
+  };
+  view().onclick = async (e) => {
+    const b = e.target.closest('[data-clear]'); if (!b) return;
+    if (!confirm('Remove the logo for ' + b.dataset.name + '?')) return;
+    try {
+      await api('logo_save', { body: { target: b.dataset.clear, id: +b.dataset.id, logo: '' } });
+      const img = $('#lg_' + b.dataset.clear + '_' + b.dataset.id); img.removeAttribute('src'); img.style.display = 'none';
+    } catch (err) { alert(niceErr(err)); }
+  };
+}
+
+/* ---------------- Customers (mobile numbers captured at the POS) ---------------- */
+async function tCustomers() {
+  const st = await settings();
+  view().innerHTML = `<div class="card"><h3>Customers</h3><div class="hint">Mobile numbers typed at the POS. Only customers marked "agrees to offers" should receive promotions.</div>
+    <div class="row" style="margin-top:8px"><div><label>Search name or number</label><input id="cu_q" placeholder="050..."></div>
+      <div class="fit"><label>&nbsp;</label><label style="display:flex;gap:6px;align-items:center;margin:0;color:var(--ink)"><input type="checkbox" id="cu_ok" style="width:auto"> Offers only</label></div>
+      <div class="fit"><label>&nbsp;</label><button class="btn sec" id="cu_csv" data-ic="download">CSV</button></div></div>
+    <div style="margin-top:10px"><label>Offer message (used by the WhatsApp buttons)</label>
+      <textarea id="cu_msg" rows="3" maxlength="500">Hello! Thank you for shopping with us. This week enjoy a special offer at our shop. Show this message at the counter.</textarea></div></div>
+    <div class="card"><div class="tbl" id="cu_list"></div></div>`;
+  let list = [];
+  const wa = (c) => 'https://wa.me/' + c.phone + '?text=' + encodeURIComponent($('#cu_msg').value);
+  const draw = () => {
+    $('#cu_list').innerHTML = `<table><tr><th>Customer</th><th>Mobile</th><th class="r">Visits</th><th class="r">Spent</th><th>Last visit</th><th>Offers</th><th></th></tr>${list.map((c) => `<tr>
+      <td>${esc(c.name || '-')}<div class="hint">${esc(c.shop || '')}</div></td><td>+${esc(c.phone)}</td><td class="r">${c.visits}</td><td class="r">${money(c.total_spent)}</td><td>${esc((c.last_seen || '').slice(0, 10))}</td>
+      <td><label style="display:flex;gap:6px;align-items:center;margin:0;color:var(--ink)"><input type="checkbox" style="width:auto" data-offers="${c.id}" ${c.offers_ok ? 'checked' : ''}> ${c.offers_ok ? 'Yes' : 'No'}</label></td>
+      <td><a class="btn sec" style="text-decoration:none;display:inline-flex" href="${wa(c)}" target="_blank" rel="noopener" data-ic="whatsapp" title="Send on WhatsApp"></a></td></tr>`).join('') || '<tr><td colspan="7">No customers yet. Type a mobile number at the POS payment screen.</td></tr>'}</table>`;
+    hydrateIcons($('#cu_list'));
+  };
+  const load = async () => {
+    list = (await api('customers_list', { params: { q: $('#cu_q').value.trim(), offers: $('#cu_ok').checked ? '1' : '' } })).customers;
+    draw();
+  };
+  $('#cu_q').oninput = () => { clearTimeout(tCustomers.t); tCustomers.t = setTimeout(load, 300); };
+  $('#cu_ok').onchange = load;
+  $('#cu_msg').oninput = draw;
+  $('#cu_csv').onclick = () => downloadCsv('customers.csv', [['Name', 'Mobile', 'Visits', 'Spent', 'Last visit', 'Agrees to offers']].concat(list.map((c) => [c.name || '', '+' + c.phone, c.visits, c.total_spent, c.last_seen, c.offers_ok ? 'yes' : 'no'])));
+  $('#cu_list').onchange = async (e) => {
+    const b = e.target.closest('[data-offers]'); if (!b) return;
+    const c = list.find((x) => String(x.id) === b.dataset.offers);
+    try { await api('customer_update', { body: { id: c.id, name: c.name, offers_ok: b.checked ? 1 : 0 } }); c.offers_ok = b.checked ? 1 : 0; draw(); }
+    catch (err) { alert(niceErr(err)); b.checked = !b.checked; }
+  };
+  await load();
+}
+
+
+/* ---------------- Item master: scan first ----------------
+   Scan (barcode gun, camera or typing). A known barcode counts +1 in the list. A new barcode raises a red alert:
+   pick the existing item it belongs to (the barcode is remembered on it) or create a new item. Then put the counted
+   quantities into stock in one go (add on top, or set the stock to the count). The list stays on this device. */
+function itemScanner(redraw) {
+  const box = $('#ms_card');
+  const LK = () => 'fc_ms_' + CO + '_' + $('#ms_shop').value;
+  let list = [], pending = null, camOn = false, hist = [];   // hist: last scans, newest last, for "Undo last scan"
+  box.innerHTML = `<h3>Scan items <span class="hint" style="font-weight:400">barcode gun, camera or type</span></h3>
+    <div class="hint">Scan a product: a <b>known barcode</b> adds 1 to the list (beep). A <b>new barcode</b> shows a red alert: choose the item it belongs to (the barcode is remembered) or add a new item. Then press <b>Add to stock</b> or <b>Set stock to count</b>. <code>12*code</code> adds 12.</div>
+    <div class="row" style="margin-top:8px"><div class="fit" style="min-width:180px"><label>Shop</label><select id="ms_shop">${shopOpts()}</select></div>
+      <div style="flex:3"><label>Barcode</label><input id="ms_code" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Scan here (barcode gun types here), or type and press Enter" style="font-size:17px"></div>
+      <div class="fit"><button type="button" class="btn" id="ms_cam" data-ic="camera">Camera</button></div></div>
+    <div id="ms_alert"></div><div id="ms_last" class="hint" style="margin-top:8px"></div>
+    <div class="tbl" style="margin-top:8px"><table id="ms_tb"></table></div>
+    <div class="row" style="margin-top:8px"><div class="fit"><button type="button" class="btn sec" id="ms_undo">↶ Undo last scan</button></div><div class="fit"><button type="button" class="btn" id="ms_add">Add to stock</button></div><div class="fit"><button type="button" class="btn sec" id="ms_set">Set stock to count</button></div><div class="fit"><button type="button" class="btn sec" id="ms_clear">Clear list</button></div></div><div id="ms_msg"></div>`;
+  hydrateIcons(box);
+  const load = () => { try { list = JSON.parse(localStorage.getItem(LK()) || '[]'); } catch (e) { list = []; } };
+  const save = () => { try { localStorage.setItem(LK(), JSON.stringify(list)); } catch (e) { /* memory only */ } };
+  const drawList = () => {
+    const units = list.reduce((a, l) => a + (+l.qty || 0), 0);
+    $('#ms_tb').innerHTML = list.length ? `<tr><th>Item</th><th class="r">Stock now</th><th class="r" style="width:110px">Counted</th><th></th></tr>` + list.map((l, i) => `<tr${i === 0 ? ' style="background:var(--soft0,#f8fafc)"' : ''}><td><b>${esc(l.name)}</b><div class="hint">${esc(l.sku)} · ${esc(l.code)}</div></td><td class="r">${l.stock == null ? '…' : qtyTxt(l.stock)}</td>
+      <td class="r"><input type="number" min="0" step="0.001" value="${l.qty}" data-q="${i}" style="width:100px;text-align:right"></td><td><button type="button" class="btn sec" data-rm="${i}">✕</button></td></tr>`).join('') + `<tr><td><b>${list.length} item(s)</b></td><td></td><td class="r"><b>${qtyTxt(units)}</b></td><td></td></tr>` : '<tr><td class="hint">Nothing scanned yet.</td></tr>';
+    $('#ms_add').disabled = $('#ms_set').disabled = !list.length;
+    $('#ms_undo').disabled = !hist.length;
+  };
+  const stockOf = async (l) => { try { const r = await api('stock_lookup', { params: { shop_id: $('#ms_shop').value, code: l.sku } }); l.stock = r.found ? r.stock : 0; save(); drawList(); } catch (e) { /* offline */ } };
+  const count = (it, code, n) => {
+    let l = list.find((x) => x.item_id === it.id);
+    if (l) { l.qty = Math.round(((+l.qty || 0) + n) * 1000) / 1000; list = [l].concat(list.filter((x) => x !== l)); }
+    else { l = { item_id: it.id, name: it.name, sku: it.sku, code, qty: n, stock: null }; list.unshift(l); stockOf(l); }
+    hist.push({ item_id: it.id, n }); if (hist.length > 100) hist.shift();
+    save(); drawList();
+    $('#ms_last').innerHTML = `<span style="color:#15803d;font-size:15px">&#10003; <b>${esc(it.name)}</b> +${qtyTxt(n)} → counted <b>${qtyTxt(l.qty)}</b></span>`;
+    if (FlexScan.isOpen()) FlexScan.say(`<b>${esc(it.name)}</b> → ${qtyTxt(l.qty)}`);
+  };
+  const scan = (raw) => {
+    let code = String(raw || '').trim(), n = 1;
+    const m = /^(\d+(?:\.\d+)?)\s*[*xX]\s*(.+)$/.exec(code); if (m) { n = +m[1]; code = m[2].trim(); }
+    if (!code) return;
+    if (pending) { takeAlert('warn'); return; }   // finish the red alert first
+    const it = findItem(code);
+    if (it) { takeAlert('ok'); count(it, code, n); return; }
+    newBarcode(code, n);
+  };
+  const newBarcode = (code, n) => {
+    takeAlert('new');
+    const reopen = camOn && FlexScan.isOpen(); if (reopen) FlexScan.close();
+    pending = code;
+    const okCode = /^[A-Za-z0-9._\-]{1,64}$/.test(code);
+    $('#ms_alert').innerHTML = `<div class="card dupwarn" style="margin-top:10px"><b class="dt" style="font-size:18px">&#9888; New barcode ${esc(code)}</b>
+      ${okCode ? '' : '<div class="err">This code has characters a barcode cannot have (only letters, digits and . _ -). Check the label.</div>'}
+      <div class="hint">Not in your items yet. Is it one of your items (for example from your old stock list)? Find it so this barcode is remembered on it. Otherwise add it as a new item.</div>
+      <div class="grid g2" style="margin-top:6px"><div><label>Find existing item (name or code)</label><input id="nb_q" autocomplete="off" placeholder="e.g. perfume"><div id="nb_res" style="max-height:260px;overflow:auto;margin-top:4px"></div></div>
+      <div><label>Or new item</label><div class="grid g2"><div><label>Name *</label><input id="nb_name" maxlength="200"></div><div><label>Unit</label><input id="nb_uom" value="Nos" maxlength="10"></div>
+        <div><label>Cost (no VAT)</label><input id="nb_cost" type="number" step="0.01" min="0" value="0"></div><div><label>Selling price (VAT incl.) *</label><input id="nb_price" type="number" step="0.01" min="0"></div></div>
+        <div class="row" style="margin-top:8px"><div class="fit"><button type="button" class="btn" id="nb_new">Add new item</button></div></div></div></div>
+      <div class="row" style="margin-top:8px"><div class="fit"><button type="button" class="btn sec" id="nb_skip">Skip this barcode</button></div></div><div class="err" id="nb_err"></div></div>`;
+    $('#nb_q').focus();
+    const close = () => { pending = null; $('#ms_alert').innerHTML = ''; if (reopen) setTimeout(cam, 250); else $('#ms_code').focus(); };
+    const results = (q) => {
+      q = q.trim().toLowerCase(); const q2 = q.replace(/[^a-z0-9._\-\/]+/g, '-');
+      const r = q.length < 2 ? [] : ITEMS.filter((i) => i.name.toLowerCase().includes(q) || i.sku.toLowerCase().includes(q) || i.sku.toLowerCase().includes(q2)).slice(0, 30);
+      $('#nb_res').innerHTML = r.map((i) => `<button type="button" class="btn sec" data-li="${i.id}" style="display:block;width:100%;text-align:left;margin:3px 0;padding:8px 10px">${esc(i.name)} <span class="hint">${esc(i.sku)} · ${money(i.price)}${(i.barcodes || []).length ? ' · has barcode ' + esc(i.barcodes[0]) : ''}</span></button>`).join('') || (q.length < 2 ? '' : '<div class="hint">Nothing found. Add it as a new item.</div>');
+    };
+    $('#nb_q').oninput = (e) => results(e.target.value);
+    $('#nb_res').onclick = async (e) => {
+      const b = e.target.closest('[data-li]'); if (!b) return;
+      const it = ITEMS.find((x) => x.id === +b.dataset.li);
+      if (!okCode) return;
+      try { await api('item_barcode_link', { body: { company_id: CO, item_id: it.id, barcode: code } }); it.barcodes = (it.barcodes || []).concat(code); takeAlert('ok'); count(it, code, n); close(); redraw(); }
+      catch (er) { $('#nb_err').textContent = niceErr(er); }
+    };
+    $('#nb_new').onclick = async () => {
+      const name = $('#nb_name').value.trim(), price = $('#nb_price').value;
+      if (!name || price === '') { $('#nb_err').textContent = 'Type the name and the selling price.'; return; }
+      if (!okCode) return;
+      const skuOk = /^[A-Za-z0-9._\-\/]{1,40}$/.test(code) && !ITEMS.some((i) => i.sku.toLowerCase() === code.toLowerCase());
+      try {
+        const r = await api('items_save', { body: { company_id: CO, sku: skuOk ? code : 'BC' + code.slice(-30) + '-' + Date.now().toString(36).slice(-3), name, uom: $('#nb_uom').value || 'pc', cost: $('#nb_cost').value || 0, price, vat_rate: 5, reorder_level: 0, barcodes: [code], active: true } });
+        await loadItems(); const it = ITEMS.find((x) => x.id === r.id); takeAlert('ok'); count(it, code, n); close(); redraw();
+      } catch (er) { $('#nb_err').textContent = niceErr(er); }
+    };
+    $('#nb_skip').onclick = close;
+  };
+  const cam = () => { camOn = true; FlexScan.open((code) => scan(code), { gap: 900 }); const d = document.querySelector('dialog[open]'); if (d) d.addEventListener('close', () => { if (!pending) camOn = false; }, { once: true }); };
+  $('#ms_cam').onclick = cam;
+  $('#ms_code').onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); scan(e.target.value); e.target.value = ''; } };
+  $('#ms_shop').onchange = () => { hist = []; load(); drawList(); list.forEach(stockOf); };
+  $('#ms_tb').oninput = (e) => { const q = e.target.closest('[data-q]'); if (q) { list[+q.dataset.q].qty = Math.max(0, +q.value || 0); save(); } };
+  $('#ms_tb').onclick = (e) => { const r = e.target.closest('[data-rm]'); if (r) { const gone = list.splice(+r.dataset.rm, 1)[0]; hist = hist.filter((h) => !gone || h.item_id !== gone.item_id); save(); drawList(); } };
+  // Undo takes back exactly the last scan (its quantity); press again for the one before. Nothing is posted to stock until Add / Set.
+  $('#ms_undo').onclick = () => {
+    const h = hist.pop(); if (!h) return;
+    const l = list.find((x) => x.item_id === h.item_id);
+    if (l) { l.qty = Math.round(((+l.qty || 0) - h.n) * 1000) / 1000; if (l.qty <= 0.0005) list = list.filter((x) => x !== l); }
+    save(); drawList();
+    $('#ms_last').innerHTML = l ? `<span style="font-size:15px">↶ Undone: <b>${esc(l.name)}</b> −${qtyTxt(h.n)} → counted <b>${qtyTxt(Math.max(0, l.qty))}</b></span>` : '';
+    $('#ms_code').focus();
+  };
+  $('#ms_clear').onclick = () => { if (list.length && !confirm('Clear the scanned list? Stock is not changed.')) return; list = []; hist = []; save(); drawList(); $('#ms_last').innerHTML = ''; };
+  const post = async (mode) => {
+    const shop = shopsOf().find((s) => s.id === +$('#ms_shop').value);
+    const units = list.reduce((a, l) => a + (+l.qty || 0), 0);
+    if (!confirm(mode === 'add' ? `Add ${qtyTxt(units)} unit(s) of ${list.length} item(s) to the stock of ${shop ? shop.name : 'this shop'}?` : `Set the stock of these ${list.length} item(s) in ${shop ? shop.name : 'this shop'} to the counted quantity?`)) return;
+    try {
+      const r = await api('stock_count_batch', { body: { shop_id: +$('#ms_shop').value, mode, lines: list.map((l) => ({ item_id: l.item_id, qty: +l.qty || 0 })) } });
+      list = []; hist = []; save(); drawList(); $('#ms_last').innerHTML = '';
+      $('#ms_msg').className = 'okmsg'; $('#ms_msg').innerHTML = `Stock updated for ${r.lines.length} item(s): ` + r.lines.slice(0, 8).map((x) => `${esc(x.name)} ${qtyTxt(x.was)} → <b>${qtyTxt(x.now)}</b>`).join(', ') + (r.lines.length > 8 ? ' …' : '');
+    } catch (e) { msg($('#ms_msg'), niceErr(e)); }
+  };
+  $('#ms_add').onclick = () => post('add');
+  $('#ms_set').onclick = () => post('set');
+  load(); drawList(); list.forEach((l) => { if (l.stock == null) stockOf(l); });
+  $('#ms_code').focus();
+}
+
+
+/* ---------------- Stock report (like the stock list of the old shop program) ---------------- */
+async function tStockReport() {
+  view().innerHTML = `<div class="card"><h3>Stock report</h3>
+    <div class="row"><div><label>Shop</label><select id="sr2_shop">${shopOpts(true)}</select></div>
+      <div><label>Show</label><select id="sr2_show"><option value="instock">Items in stock</option><option value="all">All items</option><option value="negative">Negative stock (check)</option><option value="zero">Zero stock</option></select></div>
+      <div style="flex:2"><label>Search</label><input id="sr2_q" type="search" placeholder="code, description, category or barcode"></div>
+      <div class="fit"><label>&nbsp;</label><button class="btn sec" id="sr2_csv" data-ic="download">Excel (CSV)</button></div><div class="fit"><label>&nbsp;</label><button class="btn sec" id="sr2_pr">Print / PDF</button></div></div>
+    <div id="sr2_tot" class="grid g4" style="margin:12px 0"></div><div class="tbl" style="max-height:70vh"><table id="sr2_tb"></table></div></div>`;
+  hydrateIcons(view());
+  let d = null, t = null;
+  const load = async () => {
+    d = await api('stock_report', { params: { company_id: CO, shop_id: $('#sr2_shop').value, show: $('#sr2_show').value, q: $('#sr2_q').value.trim() } });
+    const T = d.totals;
+    $('#sr2_tot').innerHTML = [['Items', T.items], ['Total qty', qtyTxt(T.qty)], ['Value at cost', money(T.value_cost)], ['Value at sale price', money(T.value_price)], ['Negative stock', T.negative]]
+      .map(([l, v]) => `<div class="kpi"><div class="l">${l}</div><div class="v">${v}</div></div>`).join('');
+    $('#sr2_tb').innerHTML = `<tr><th class="r">#</th><th>Item code</th><th>Description</th><th class="r">Qty</th><th>Unit</th><th class="r">Cost</th><th class="r">S.Price</th><th class="r">Value (cost)</th><th class="r">Value (price)</th></tr>` +
+      d.rows.slice(0, 3000).map((r, i) => `<tr><td class="r hint">${i + 1}</td><td>${esc(r.sku)}${r.barcode ? `<div class="hint">${esc(r.barcode)}</div>` : ''}</td><td>${esc(r.name)}</td><td class="r ${r.qty < 0 ? 'neg' : ''}"><b>${qtyTxt(r.qty)}</b>${r.qty < 0 ? ' <span class="tag bad">check</span>' : ''}</td><td>${esc(r.uom)}</td>
+        <td class="r">${money(r.cost)}</td><td class="r">${money(r.price)}</td><td class="r">${money(r.value_cost)}</td><td class="r">${money(r.value_price)}</td></tr>`).join('') +
+      `<tr><td></td><td colspan="2"><b>Total</b></td><td class="r"><b>${qtyTxt(T.qty)}</b></td><td></td><td></td><td></td><td class="r"><b>${money(T.value_cost)}</b></td><td class="r"><b>${money(T.value_price)}</b></td></tr>` +
+      (d.rows.length > 3000 ? '<tr><td colspan="9" class="hint">First 3000 rows shown. Excel and Print include all.</td></tr>' : '');
+  };
+  ['sr2_shop', 'sr2_show'].forEach((id) => { $('#' + id).onchange = load; });
+  $('#sr2_q').oninput = () => { clearTimeout(t); t = setTimeout(load, 300); };
+  $('#sr2_csv').onclick = () => d && downloadCsv(`stock-report-${today()}.csv`, [['#', 'Item Code', 'Barcode', 'Description', 'Category', 'Qty', 'Unit', 'Cost', 'S.Price', 'Value at cost', 'Value at price']]
+    .concat(d.rows.map((r, i) => [i + 1, r.sku, r.barcode || '', r.name, r.category || '', r.qty, r.uom, r.cost, r.price, r.value_cost, r.value_price]))
+    .concat([['', 'Total:', '', '', '', d.totals.qty, '', '', '', d.totals.value_cost, d.totals.value_price]]));
+  $('#sr2_pr').onclick = () => d && printHtml(`<div style="font-family:Arial,sans-serif;font-size:11px"><h2 style="margin:0">Stock report</h2><div>${esc(d.company)} · ${esc(d.shop)} · ${esc(d.at)} · ${esc($('#sr2_show').selectedOptions[0].text)}</div>
+    <table style="width:100%;border-collapse:collapse;margin-top:8px" border="1" cellpadding="3"><tr><th>#</th><th align="left">Item Code</th><th align="left">Description</th><th align="right">Qty</th><th>Unit</th><th align="right">Cost</th><th align="right">S.Price</th><th align="right">Value (cost)</th><th align="right">Value (price)</th></tr>
+    ${d.rows.map((r, i) => `<tr><td align="right">${i + 1}</td><td>${esc(r.sku)}</td><td>${esc(r.name)}</td><td align="right">${qtyTxt(r.qty)}</td><td>${esc(r.uom)}</td><td align="right">${money(r.cost)}</td><td align="right">${money(r.price)}</td><td align="right">${money(r.value_cost)}</td><td align="right">${money(r.value_price)}</td></tr>`).join('')}
+    <tr><td></td><td colspan="2"><b>Total: ${d.totals.items} items</b></td><td align="right"><b>${qtyTxt(d.totals.qty)}</b></td><td></td><td></td><td></td><td align="right"><b>${money(d.totals.value_cost)}</b></td><td align="right"><b>${money(d.totals.value_price)}</b></td></tr></table></div>`);
+  await load();
+}
+
+/* ---------------- Company details ---------------- */
+async function tCompany() {
+  const owner = S.user.role === 'owner';
+  const cs = S.org.companies || [];
+  const c = cs.find((x) => x.id === CO) || cs[0] || {};
+  const shops = shopsOf();
+  view().innerHTML = `<div class="card"><h3>Company details</h3><div class="hint">Printed on receipts, A4 tax invoices and purchase bills. ${owner ? 'Only the owner can change them.' : 'Only the owner can change these.'}</div>
+    <form id="co_f"><div class="grid g2">
+      <div><label>Company name *</label><input id="co_name" maxlength="150" required value="${esc(c.name || '')}"></div>
+      <div><label>Arabic name</label><input id="co_ar" dir="rtl" maxlength="150" value="${esc(c.name_ar || '')}"></div>
+      <div><label>TRN (15 digits, VAT registered)</label><input id="co_trn" maxlength="15" inputmode="numeric" value="${esc(c.trn || '')}"></div>
+      <div><label>Phone</label><input id="co_ph" maxlength="40" value="${esc(c.phone || '')}"></div>
+      <div style="grid-column:1/-1"><label>Address</label><input id="co_ad" maxlength="255" value="${esc(c.address || '')}"></div>
+      <div style="grid-column:1/-1"><label>Bill footer</label><input id="co_ft" maxlength="255" value="${esc(c.footer || '')}"></div></div>
+      ${owner ? '<div style="margin-top:10px"><button class="btn">Save company details</button></div>' : ''}<div id="co_msg"></div></form></div>
+    <div class="card"><h3>Shops and branches</h3><div class="tbl"><table><tr><th>Code</th><th>Shop</th><th>Trade</th></tr>${shops.map((s) => `<tr><td><b>${esc(s.code)}</b></td><td>${esc(s.name)}</td><td>${esc(s.trade || '')}</td></tr>`).join('')}</table></div>
+      <div class="hint" style="margin-top:6px"><b>Need another shop or branch?</b> Adnys adds it for you, with its register and code. Contact <a href="https://adnys.com" target="_blank" rel="noopener">Adnys</a>. Logos and bill preferences are under Settings &gt; Preferences &amp; logos.</div></div>`;
+  if (!owner) { view().querySelectorAll('#co_f input').forEach((i) => { i.disabled = true; }); return; }
+  $('#co_f').onsubmit = async (e) => {
+    e.preventDefault();
+    const body = { id: c.id, name: $('#co_name').value, name_ar: $('#co_ar').value, trn: $('#co_trn').value, phone: $('#co_ph').value, address: $('#co_ad').value, footer: $('#co_ft').value };
+    try {
+      await api('company_update', { body });
+      Object.assign(c, body); sessionStorage.setItem('fc_org', JSON.stringify(S.org));
+      const o = $('#co').selectedOptions[0]; if (o) o.textContent = body.name;
+      msg($('#co_msg'), 'Saved. New bills use these details.', true);
+    } catch (err) { msg($('#co_msg'), niceErr(err)); }
+  };
+}
+
+
+/* ---------------- Profit summary by month (profit and loss) ---------------- */
+async function tProfit() {
+  const y0 = +today().slice(0, 4);
+  view().innerHTML = `<div class="card"><h3>Profit summary by month</h3>
+    <div class="hint">Income, cost of goods sold, gross profit, every expense category and net profit for each month of the year. Amounts are <b>without VAT</b> (VAT is collected for the FTA, see Accounts &gt; VAT return). Cost of goods uses each item's cost at the time of sale, so keep item costs right through Purchases.</div>
+    <div class="row" style="margin-top:8px"><div class="fit"><label>Year</label><select id="pf_y">${[0, 1, 2, 3].map((k) => `<option>${y0 - k}</option>`).join('')}</select></div>
+      <div><label>Shop</label><select id="pf_shop">${shopOpts(true)}</select></div>
+      <div class="fit"><label>&nbsp;</label><button class="btn sec" id="pf_csv" data-ic="download">Excel (CSV)</button></div><div class="fit"><label>&nbsp;</label><button class="btn sec" id="pf_pr">Print / PDF</button></div></div>
+    <div id="pf_kpi" class="grid g4" style="margin:12px 0"></div><div class="tbl"><table id="pf_tb" class="pftb"></table></div></div>
+    <style>.pftb td,.pftb th{white-space:nowrap}.pftb tr.sec td{font-weight:800;background:var(--soft0,#f8fafc)}.pftb tr.tot td{font-weight:800;border-top:2px solid var(--ink)}.pftb td.cur,.pftb th.cur{background:#eef2ff}html[data-theme=dark] .pftb td.cur,html[data-theme=dark] .pftb th.cur{background:#1e293b}</style>`;
+  hydrateIcons(view());
+  const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec', 'Year'];
+  let d = null, lines = [];
+  const load = async () => {
+    d = await api('profit_report', { params: { company_id: CO, year: $('#pf_y').value, shop_id: $('#pf_shop').value } });
+    const R = d.rows;
+    lines = [['sec', 'Income'], ['', 'Sales (without VAT)', R.sales], ['', 'Sales returns', R.returns], ['tot', 'Net sales', R.net_sales],
+      ['', 'Cost of goods sold', R.cogs.map((v) => -v)], ['tot', 'Gross profit', R.gross_profit], ['', 'Gross margin %', R.net_sales.map((v, i) => (v ? Math.round(R.gross_profit[i] / v * 1000) / 10 : 0))],
+      ['sec', 'Expenses (without VAT)']].concat(d.expenses.map((e) => ['', e.category, e.values.map((v) => -v)]))
+      .concat([['tot', 'Total expenses', R.total_expenses.map((v) => -v)], ['tot net', 'NET PROFIT', R.net_profit],
+        ['sec', 'For information'], ['', 'Bills (sales count)', R.bills], ['', 'Purchases (without VAT)', R.purchases], ['', 'Returns to suppliers', R.purchase_returns], ['', 'VAT on sales', R.sales_vat], ['', 'VAT on expenses', R.expense_vat]]);
+    const cur = +d.year === d.this_year ? d.this_month - 1 : -1;
+    const fmt = (l, v) => l[1] === 'Gross margin %' ? (v ? v + '%' : '') : l[1] === 'Bills (sales count)' ? (v || '') : (Math.abs(v) < 0.005 ? '' : money(v));
+    $('#pf_tb').innerHTML = `<tr><th></th>${MON.map((m, i) => `<th class="r${i === cur ? ' cur' : ''}">${m}</th>`).join('')}</tr>` + lines.map((l) => l[0].startsWith('sec')
+      ? `<tr class="sec"><td colspan="14">${esc(l[1])}</td></tr>`
+      : `<tr class="${l[0]}"><td>${esc(l[1])}</td>${l[2].map((v, i) => `<td class="r${i === cur ? ' cur' : ''} ${l[1] !== 'Gross margin %' && v < 0 ? 'neg' : ''}"${l[0].includes('net') ? ` style="font-size:15px;color:${v < 0 ? 'var(--bad)' : 'var(--ok)'}"` : ''}>${fmt(l, v)}</td>`).join('')}</tr>`).join('');
+    const Y = 12, last = cur >= 0 ? cur : 11;
+    $('#pf_kpi').innerHTML = [['Net sales ' + d.year, money(R.net_sales[Y])], ['Gross profit', money(R.gross_profit[Y])], ['Expenses', money(R.total_expenses[Y])], ['Net profit ' + d.year, money(R.net_profit[Y])], [(cur >= 0 ? 'This month' : MON[last]) + ' net profit', money(R.net_profit[last])]]
+      .map(([l, v]) => `<div class="kpi"><div class="l">${l}</div><div class="v">${v}</div></div>`).join('');
+  };
+  $('#pf_y').onchange = load; $('#pf_shop').onchange = load;
+  $('#pf_csv').onclick = () => d && downloadCsv(`profit-summary-${d.year}.csv`, [[`Profit summary ${d.year} - ${d.company} - ${d.shop}`], [''].concat(MON)].concat(lines.map((l) => l[0].startsWith('sec') ? [l[1]] : [l[1]].concat(l[2]))));
+  $('#pf_pr').onclick = () => d && printHtml(`<div style="font-family:Arial,sans-serif;font-size:10px"><h2 style="margin:0">Profit summary ${d.year}</h2><div>${esc(d.company)} · ${esc(d.shop)} · without VAT · printed ${esc(nowStamp())}</div>
+    <table border="1" cellpadding="3" style="border-collapse:collapse;width:100%;margin-top:8px"><tr><th></th>${MON.map((m) => `<th align="right">${m}</th>`).join('')}</tr>
+    ${lines.map((l) => l[0].startsWith('sec') ? `<tr><td colspan="14" style="background:#eee"><b>${esc(l[1])}</b></td></tr>` : `<tr><td${l[0] ? ' style="font-weight:bold"' : ''}>${esc(l[1])}</td>${l[2].map((v) => `<td align="right"${l[0] ? ' style="font-weight:bold"' : ''}>${l[1] === 'Gross margin %' ? (v ? v + '%' : '') : (Math.abs(v) < 0.005 ? '' : money(v))}</td>`).join('')}</tr>`).join('')}</table></div>`);
+  await load();
+}
+
+
+/* ---------------- Quick item window (from Purchases) ----------------
+   A code or name that is not an item yet: add it on the spot, or say which existing item it is (the barcode is
+   remembered), then go straight back to the bill. Resolves with the item, or null when cancelled. */
+function quickItem(opts) {
+  opts = opts || {};
+  const code = String(opts.code || '').trim();
+  const codeOk = /^[A-Za-z0-9._\-]{1,64}$/.test(code);
+  const looksCode = codeOk && !/\s/.test(code) && (/\d/.test(code) || code.length <= 12);
+  return new Promise((resolve) => {
+    takeAlert('new');
+    const d = document.createElement('dialog'); d.style.width = 'min(640px,96vw)';
+    d.innerHTML = `<form method="dialog"><h3 style="margin:0 0 4px;color:#b91c1c">&#9888; ${code ? (looksCode ? 'New code ' : 'New item ') + esc(code) : 'New item'}</h3>
+      <div class="hint">Not in your items yet. Add it now and it goes straight onto the bill.${looksCode ? ' Or, if it is an item you already have, find it so this barcode is remembered on it.' : ''}</div>
+      ${looksCode ? `<details style="margin-top:8px"><summary><b>It is an existing item</b> (add this barcode to it)</summary><input id="qi_q" type="search" placeholder="Find by name or code" autocomplete="off" style="margin-top:6px"><div id="qi_res" style="max-height:220px;overflow:auto"></div></details>` : ''}
+      <div class="grid g2" style="margin-top:8px">
+        <div><label>Item code (SKU) *</label><input id="qi_sku" maxlength="40" required value="${esc(looksCode && /^[A-Za-z0-9._\-\/]{1,40}$/.test(code) && !findItem(code) ? code : '')}"></div>
+        <div><label>Name *</label><input id="qi_name" maxlength="200" required value="${esc(looksCode ? '' : code)}"></div>
+        <div><label>Barcode</label><input id="qi_bc" maxlength="64" value="${esc(looksCode ? code : '')}"></div>
+        <div><label>Unit</label><input id="qi_uom" maxlength="10" value="Nos"></div>
+        <div><label>Cost (no VAT) *</label><input id="qi_cost" type="number" step="0.0001" min="0" required value="${opts.cost || ''}"></div>
+        <div><label>Selling price (VAT incl.) *</label><input id="qi_price" type="number" step="0.01" min="0" required></div>
+        <div><label>VAT %</label><input id="qi_vat" type="number" step="0.01" min="0" value="${opts.vat ?? 5}"></div>
+        <div><label>Category</label><input id="qi_cat" maxlength="80"></div></div>
+      <div class="err" id="qi_err"></div>
+      <div class="row" style="margin-top:10px"><div class="fit"><button class="btn" id="qi_ok">Save item and add to bill</button></div><div class="fit"><button type="button" class="btn sec" id="qi_no">Cancel</button></div></div></form>`;
+    document.body.appendChild(d); d.showModal();
+    const end = (it) => { d.close(); d.remove(); resolve(it || null); };
+    $('#qi_no', d).onclick = () => end(null);
+    d.addEventListener('cancel', (e) => { e.preventDefault(); end(null); });
+    (looksCode ? $('#qi_name', d) : $('#qi_sku', d)).focus();
+    if (!$('#qi_sku', d).value && !looksCode) $('#qi_sku', d).value = code.toUpperCase().replace(/[^A-Z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 20);
+    if ($('#qi_q', d)) {
+      $('#qi_q', d).oninput = (e) => {
+        const q = e.target.value.trim().toLowerCase(), q2 = q.replace(/[^a-z0-9._\-\/]+/g, '-');
+        const r = q.length < 2 ? [] : ITEMS.filter((i) => i.name.toLowerCase().includes(q) || i.sku.toLowerCase().includes(q) || i.sku.toLowerCase().includes(q2)).slice(0, 25);
+        $('#qi_res', d).innerHTML = r.map((i) => `<button type="button" class="btn sec" data-qi="${i.id}" style="display:block;width:100%;text-align:left;margin:3px 0;padding:7px 10px">${esc(i.name)} <span class="hint">${esc(i.sku)} · cost ${money(i.cost)}</span></button>`).join('') || (q.length < 2 ? '' : '<div class="hint">Nothing found.</div>');
+      };
+      $('#qi_res', d).onclick = async (e) => {
+        const b = e.target.closest('[data-qi]'); if (!b) return;
+        const it = ITEMS.find((x) => x.id === +b.dataset.qi);
+        try { await api('item_barcode_link', { body: { company_id: CO, item_id: it.id, barcode: code } }); it.barcodes = (it.barcodes || []).concat(code); takeAlert('ok'); end(it); }
+        catch (er) { $('#qi_err', d).textContent = niceErr(er); }
+      };
+    }
+    $('form', d).onsubmit = async (e) => {
+      e.preventDefault();
+      const sku = $('#qi_sku', d).value.trim(), bc = $('#qi_bc', d).value.trim();
+      if (findItem(sku)) { $('#qi_err', d).textContent = 'Item code ' + sku + ' is already used by ' + findItem(sku).name + '.'; return; }
+      $('#qi_ok', d).disabled = true;
+      try {
+        const r = await api('items_save', { body: { company_id: CO, sku, name: $('#qi_name', d).value, uom: $('#qi_uom', d).value || 'pc', category: $('#qi_cat', d).value,
+          cost: $('#qi_cost', d).value || 0, price: $('#qi_price', d).value, vat_rate: $('#qi_vat', d).value || 0, reorder_level: 0, barcodes: bc ? [bc] : [], active: true } });
+        await loadItems(); takeAlert('ok'); end(ITEMS.find((x) => x.id === r.id));
+      } catch (er) { $('#qi_err', d).textContent = niceErr(er); $('#qi_ok', d).disabled = false; }
+    };
+  });
+}
+
+/* ---------------- Users ---------------- */
+async function tUsers() {
+  const d = await api('users_list');
+  const shops = S.org.shops || [];
+  const shopOptsU = (sel) => `<option value="">All shops</option>` + shops.map((s) => `<option value="${s.id}" ${String(sel) === String(s.id) ? 'selected' : ''}>${esc(s.code)} - ${esc(s.name)}</option>`).join('');
+  view().innerHTML = `<div class="card"><h3>Add or edit user</h3><form id="u_f"><input type="hidden" id="u_id">
+    <div class="grid g3">
+      <div><label>Name *</label><input id="u_name" required maxlength="120"></div>
+      <div><label>Email (optional)</label><input id="u_email" type="email" maxlength="190"></div>
+      <div><label>Role</label><select id="u_role">${ROLES.map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}</select></div>
+      <div><label>Shop</label><select id="u_shop">${shopOptsU('')}</select></div>
+      <div><label>Password (blank = keep / auto)</label><input id="u_pw" type="password" minlength="8" autocomplete="new-password"></div>
+      <div><label>&nbsp;</label><label style="margin:0"><input type="checkbox" id="u_act" checked style="width:auto"> Active</label></div>
+    </div>
+    <div class="hint">Only the primary owner can nominate a sub-owner. The primary owner account cannot be disabled or reset by anyone in the shop; if the owner forgets the password, use Forgot password on the sign-in page and Adnys will reset it. Only owners and sub-owners can reset other users' passwords. The username is generated automatically: shop code + first 3 letters of the name + 6 digits. Users can sign in with it or their email.</div>
+    <div class="row" style="margin-top:10px"><div class="fit"><button class="btn">Save user</button></div><div class="fit"><button class="btn sec" type="button" id="u_new">Clear</button></div></div><div id="u_msg"></div></form></div>
+    <div class="card"><h3>Users</h3><div class="tbl"><table id="u_tb"></table></div></div>`;
+  const draw = () => {
+    $('#u_tb').innerHTML = `<tr><th>Name</th><th>Username</th><th>Email</th><th>Role</th><th>Shop</th><th>Status</th><th></th></tr>` +
+      d.users.map((u) => `<tr><td>${esc(u.name)}</td><td><b>${esc(u.username || '—')}</b></td><td>${esc(u.email || '—')}</td><td>${esc(ROLE_LABEL[u.role] || u.role)}</td>
+        <td>${u.shop_id ? esc(u.shop_code + ' - ' + u.shop_name) : 'All shops'}</td><td>${+u.active ? '<span class="tag ok">active</span>' : '<span class="tag bad">disabled</span>'}</td>
+        <td class="hold-actions">${+u.can_edit ? `<button class="btn sec" data-ue="${u.id}">Edit</button>` : ''}${+u.can_reset ? `<button class="btn sec" data-ur="${u.id}">Reset password</button>` : ''}
+          ${+u.can_toggle ? `<button class="btn sec" data-ut="${u.id}">${+u.active ? 'Disable' : 'Enable'}</button>` : ''}${+u.is_primary ? '<span class="tag ok">primary owner</span>' : ''}</td></tr>`).join('') || '<tr><td colspan="7">No users.</td></tr>';
+  };
+  draw();
+  const clear = () => { $('#u_f').reset(); $('#u_id').value = ''; $('#u_act').checked = true; };
+  $('#u_new').onclick = clear;
+  $('#u_tb').onclick = async (e) => {
+    const ed = e.target.closest('[data-ue]'), rs = e.target.closest('[data-ur]'), tg = e.target.closest('[data-ut]');
+    if (ed) {
+      const u = d.users.find((x) => x.id === +ed.dataset.ue);
+      $('#u_id').value = u.id; $('#u_name').value = u.name; $('#u_email').value = u.email || ''; $('#u_role').value = u.role;
+      $('#u_shop').value = u.shop_id || ''; $('#u_pw').value = ''; $('#u_act').checked = !!+u.active;
+      scrollTo({ top: 0, behavior: 'smooth' });
+    }
+    if (rs) {
+      if (!confirm('Reset this password? They will be signed out.')) return;
+      try { showCreds('New password', await api('user_reset', { body: { user_id: +rs.dataset.ur } })); } catch (err) { alert(niceErr(err)); }
+    }
+    if (tg) {
+      const u = d.users.find((x) => x.id === +tg.dataset.ut);
+      try {
+        await api('user_save', { body: { id: u.id, name: u.name, email: u.email || '', role: u.role, shop_id: u.shop_id || '', active: +u.active ? 0 : 1 } });
+        await tUsers();
+      } catch (err) { alert(niceErr(err)); }
+    }
+  };
+  $('#u_f').onsubmit = async (e) => {
+    e.preventDefault();
+    try {
+      const r = await api('user_save', { body: { id: +$('#u_id').value || 0, name: $('#u_name').value, email: $('#u_email').value, role: $('#u_role').value, shop_id: $('#u_shop').value || '', password: $('#u_pw').value, active: $('#u_act').checked } });
+      await tUsers();
+      if (r.password) showCreds('User saved. Give these to the user.', r); else msg($('#u_msg'), 'Saved.', true);
+    } catch (err) { msg($('#u_msg'), niceErr(err)); }
+  };
+}
+
+/* ---------------- boot ---------------- */
+startPage(() => {
+  const cs = S.org.companies || [];
+  $('#co').innerHTML = cs.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
+  CO = cs.length ? cs[0].id : 0;
+  if (!CO) { view().innerHTML = '<div class="card">No company is set up yet.</div>'; return; }
+  const h = location.hash.slice(1);
+  if (TAB_DEFS[h] && TAB_DEFS[h].roles.includes(S.user.role)) TAB = h;
+  const bw = S.user.role === 'stocker';   // stocker phones stay black and white, also on the next sign-in screen
+  try { if (bw) localStorage.setItem('fc_bw', '1'); else localStorage.removeItem('fc_bw'); } catch (e) { /* ignore */ }
+  document.documentElement.classList.toggle('bw', bw);
+  if (bw) { document.documentElement.dataset.theme = 'light'; const m = document.querySelector('meta[name="theme-color"]'); if (m) m.content = '#000000'; }
+  if (S.user.role === 'stocker') { location.replace('../stock/'); return; }   // stockers use the Stock take app
+  show();
+}, ['owner', 'manager', 'accountant', 'purchase', 'stocker']);
+</script>
+<script src="../assets/pwa.js?v=6ee69c42eb" data-sw="sw.js"></script>
+</body>
+</html>

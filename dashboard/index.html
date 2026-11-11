@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en" data-app="dashboard">
+<head>
+<meta charset="utf-8">
+<script>try{var t=localStorage.getItem('fc_theme');if(t!=='dark'&&t!=='light')t=matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light';document.documentElement.dataset.theme=t}catch(e){}</script>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="../assets/icons/dashboard-32.png" type="image/png">
+<link rel="apple-touch-icon" href="../assets/icons/dashboard-apple.png">
+<meta name="theme-color" content="#b45309">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Flex-C Dashboard">
+<title>Flex-C Dashboard</title>
+<link rel="stylesheet" href="../assets/app.css?v=498d606380">
+</head>
+<body>
+<header class="top">
+  <span class="brandmark">F</span><b>Flex-C</b>
+  <a class="on" href="./">Dashboard</a><a href="../office/">Back office</a><a href="../pos/" target="_blank" rel="noopener">POS</a>
+  <span class="sp"></span><small id="who"></small><small id="stamp"></small>
+  <button id="re">Refresh</button><button id="out">Sign out</button>
+</header>
+<div class="wrap">
+  <div class="grid g3" id="kpis"></div>
+  <div id="alerts"></div>
+  <h3 style="margin:22px 0 10px;font-size:17px">Companies</h3>
+  <div id="cos"></div>
+</div>
+<script src="../assets/icons.js?v=b59449fc8d"></script>
+<script src="../assets/app.js?v=52d847de3f"></script>
+<script>
+const kpi = (l, v, s, c, k) => `<div class="kpi ${k || ''}"><div class="l">${l}</div><div class="v ${c || ''}">${v}</div><div class="s">${s || ''}</div></div>`;
+function ago(ts) {
+  if (!ts) return '<span class="tag warn">no sales yet</span>';
+  const m = Math.round((Date.now() - new Date(ts.replace(' ', 'T') + '+04:00').getTime()) / 60000);
+  const txt = m < 1 ? 'just now' : m < 60 ? m + ' min ago' : m < 1440 ? Math.round(m / 60) + ' h ago' : Math.round(m / 1440) + ' d ago';
+  return `<span class="tag ${m > 240 ? 'warn' : 'ok'}">${txt}</span>`;
+}
+function when(ts) {
+  if (!ts) return '';
+  const m = Math.round((Date.now() - new Date(ts.replace(' ', 'T') + '+04:00').getTime()) / 60000);
+  return m < 1 ? 'just now' : m < 60 ? m + ' min ago' : m < 1440 ? Math.round(m / 60) + ' h ago' : Math.round(m / 1440) + ' d ago';
+}
+function alertCard(d) {
+  const a = d.alerts || [];
+  const newCount = d.totals.new_alerts || 0;
+  const rows = a.map((n) => `<tr>
+      <td><span class="tag ${tagLevel(n.level)}">${esc(n.level)}</span></td>
+      <td>${esc(n.title)}<div style="font-size:12px;color:var(--mute)">${esc(n.detail || '')}</div></td>
+      <td>${esc(n.shop || '')}</td>
+      <td class="r">${n.qty == null ? '' : (+n.qty).toFixed(2)}</td>
+      <td>${esc(when(n.created_at))}</td></tr>`).join('');
+  return `<div class="card" style="margin-top:14px">
+    <div class="row" style="margin-bottom:8px"><h2 style="margin:0">Alerts ${newCount ? `<span class="tag bad">${newCount} new</span>` : ''}</h2>
+      <div class="fit"><a class="btn sec" href="../office/#notifications">Open alerts</a></div></div>
+    <p style="color:var(--mute);margin:0 0 8px;font-size:13px">Low stock (below ${(+d.low_stock_threshold || 10)} units or the item reorder level), negative stock and stock adjustments. The purchase team sees the same list.</p>
+    <div class="tbl"><table><tr><th>Level</th><th>Alert</th><th>Shop</th><th class="r">Qty</th><th>Raised</th></tr>
+      ${rows || '<tr><td colspan="5">No open alerts. Stock is healthy.</td></tr>'}</table></div></div>`;
+}
+const tagLevel = (l) => l === 'bad' ? 'bad' : l === 'warn' ? 'warn' : 'ok';
+async function load() {
+  try {
+    const d = await api('dashboard');
+    const t = d.totals;
+    $('#stamp').textContent = 'Updated ' + d.generated_at.slice(11, 16);
+    const net = t.month_profit - t.expenses_mtd;
+    $('#kpis').innerHTML =
+      kpi('Sales today', 'AED ' + money(t.today), t.txn_today + ' bills · profit ' + money(t.today_profit), '', 'big') +
+      kpi('Last 7 days', 'AED ' + money(t.week), '', '', 'k-week') +
+      kpi('This month', 'AED ' + money(t.month), 'gross profit ' + money(t.month_profit), '', 'k-month') +
+      kpi('Net after expenses (MTD)', 'AED ' + money(net), 'expenses ' + money(t.expenses_mtd), cls(net), 'k-profit') +
+      kpi('Returns today', 'AED ' + money(t.returns_today), t.returns_today_count + ' return(s) · month ' + money(t.returns_month), t.returns_today ? 'warn' : '', t.returns_today ? 'k-warn' : '') +
+      kpi('Cash-ups today', t.closings_today, t.closings_today ? 'day closed at one or more shops' : 'no shop closed the day yet', t.closings_today ? '' : 'warn', t.closings_today ? '' : 'k-warn') +
+      kpi('Open stock alerts', t.new_alerts, t.new_alerts ? 'new alerts need attention' : 'all alerts read', t.new_alerts ? 'warn' : '', t.new_alerts ? 'k-bad' : '') +
+      kpi('Stock value (at cost)', 'AED ' + money(t.stock_value), '', '', 'k-stock') +
+      kpi('Owed to suppliers', 'AED ' + money(t.payables), '', '', 'k-stock');
+    $('#alerts').innerHTML = alertCard(d);
+    $('#cos').innerHTML = d.companies.map((c) => {
+      const max = Math.max(1, ...c.top_items.map((i) => i.revenue));
+      const tmax = Math.max(1, ...c.trend.map((x) => x.sales));
+      const pay = c.today.cash + c.today.card, cashPct = pay > 0 ? Math.round(c.today.cash / pay * 100) : 0;
+      const dn = (d) => ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][new Date(d + 'T12:00:00').getDay()];
+      return `<div class="card"><div class="row" style="align-items:center;margin-bottom:10px"><h2 style="margin:0">${esc(c.name)}</h2>
+          <div class="fit"><span class="tag ${c.low_stock ? 'warn' : 'ok'}">${c.low_stock ? c.low_stock + ' low stock' : 'stock healthy'}</span></div></div>
+        <div class="grid g3" style="margin-bottom:14px">
+          ${kpi('Today', money(c.today.sales), c.today.txn + ' bills · profit ' + money(c.today.profit), '', 'k-sales')}
+          ${kpi('7 days', money(c.week.sales), 'profit ' + money(c.week.profit), '', 'k-week')}
+          ${kpi('Month', money(c.month.sales), 'profit ' + money(c.month.profit) + ' · VAT ' + money(c.month.vat), '', 'k-month')}
+          ${kpi('Stock value', money(c.stock_value), (c.low_stock ? `<span class="warn">${c.low_stock} low</span>` : 'no low stock') + (c.negative_stock ? ` · <span class="neg">${c.negative_stock} negative</span>` : ''), '', 'k-stock')}
+          ${kpi('Owed to suppliers', money(c.payables), '', '', 'k-stock')}
+          ${kpi('Expenses (month)', money(c.expenses_mtd), '', '', 'k-warn')}
+        </div>
+        <div class="grid g2" style="margin-bottom:14px">
+          <div class="shopcard"><div class="nm">Last 7 days</div>
+            <div class="spark" style="margin-bottom:20px">${c.trend.map((x) => `<div style="height:${Math.max(3, x.sales / tmax * 100)}%" title="${esc(x.day)}: ${money(x.sales)}"><small>${dn(x.day)}</small></div>`).join('')}</div></div>
+          <div class="shopcard"><div class="nm">Today by payment</div>
+            <div class="splitbar"><i style="width:${cashPct}%;background:#0a8fe0"></i><i style="width:${pay > 0 ? 100 - cashPct : 0}%;background:#6366f1"></i></div>
+            <div class="legend"><span><span class="dot" style="background:#0a8fe0"></span>Cash <b>${money(c.today.cash)}</b></span><span><span class="dot" style="background:#6366f1"></span>Card <b>${money(c.today.card)}</b></span></div></div>
+        </div>
+        <h3 style="margin:0 0 8px;font-size:15px">Shops</h3>
+        <div class="shopgrid" style="margin-bottom:14px">${c.shops.map((s) => `<div class="shopcard"><div class="nm">${esc(s.name)}</div>
+            <div class="sub">${esc(s.code || '')} · ${esc(s.trade)}${s.group_code ? ' · group ' + esc(s.group_code) : ''}</div>
+            <div class="amt">${money(s.sales)}</div><div class="sub">${s.txn} bills today</div><div style="margin-top:6px">${ago(s.last_sync)}</div></div>`).join('') || '<div class="hint">No shops</div>'}</div>
+        <div><table><tr><th>Top items (7 days)</th><th class="r">Sales</th></tr>
+          ${c.top_items.map((i) => `<tr><td>${esc(i.name)}<div class="bar"><i style="width:${Math.max(3, i.revenue / max * 100)}%"></i></div></td><td class="r">${money(i.revenue)}</td></tr>`).join('') || '<tr><td colspan="2">No sales yet</td></tr>'}
+        </table></div></div>`;
+    }).join('') || '<div class="card">No companies yet.</div>';
+  } catch (e) { $('#cos').innerHTML = `<div class="card err">${esc(niceErr(e))}</div>`; }
+}
+$('#re').onclick = load; $('#out').onclick = signOut;
+startPage(() => { load(); setInterval(load, 60000); });
+</script>
+<script src="../assets/pwa.js?v=6ee69c42eb" data-sw="sw.js"></script>
+</body>
+</html>
